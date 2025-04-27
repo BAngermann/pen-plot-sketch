@@ -1,0 +1,1 @@
+{"Axiom": "F-G-G", "Pred1": "F", "Suc1": "F-G+F+G-F", "Pred2": "G", "Suc2": "GG", "Draw": "FG", "Move": "f", "TurnAngle": 120, "iterations": 6, "Scale": 0.25, "__seed__": 0}
