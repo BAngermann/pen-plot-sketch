@@ -39,6 +39,25 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         vsk.translate( self.r, self.r)
          
         for n in range(self.n_min,self.n_max+1):
+
+            print(f'n = {n}')
+            mul_tabs = []
+            for multiplier in range(0,n+1):
+                mul_tabs.append(  frozenset([ frozenset([i, (i*multiplier)%n ] ) for i in range(0,n)] )   )
+            
+            equal_pairs = []
+            for i in range(len(mul_tabs)):
+                for j in range(i+1,len(mul_tabs)):
+                    if mul_tabs[i] == mul_tabs[j]:
+                        equal_pairs.append( set([i,j]) ) 
+            print(f'redundant pairs: {len(equal_pairs)}, {n+1-len(equal_pairs)} remaining')
+
+            for i,s in enumerate(equal_pairs):
+                for s2 in equal_pairs[:i]:
+                    if(len(s.intersection(s2))>0 ):
+                        print(s)
+                        print(s2)
+
             vsk.pushMatrix()
             for multiplier in range(0,n+1) :
                 vsk.circle(0, 0, 2 * self.r)
