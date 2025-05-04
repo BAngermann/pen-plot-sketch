@@ -17,6 +17,7 @@ class TakagiSketch(vsketch.SketchClass):
     plot_negative = vsketch.Param(True)
     plot_positive = vsketch.Param(True)
     glitch_w = vsketch.Param(True)
+    negative_layer = vsketch.Param(False)
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size("a4", landscape=False)
@@ -41,11 +42,16 @@ class TakagiSketch(vsketch.SketchClass):
             vsk.strokeWeight(stroke)
             for i in range(len(x_points)):
                 if self.plot_positive:
+                    vsk.stroke(1)
                     vsk.pushMatrix()
                     vsk.translate(0,-stroke*n*self.penWidth/10/self.page_scale)
                     vsk.line(x_points[i],y[i],x_points[i],y_plot[i])
                     vsk.popMatrix()
                 if self.plot_negative:
+                    if self.negative_layer:
+                        vsk.stroke(2)
+                    else:
+                        vsk.stroke(1)
                     vsk.pushMatrix()
                     vsk.translate(0,stroke*n*self.penWidth/10/self.page_scale)
                     vsk.line(x_points[i],y_neg[i],x_points[i],y_neg_plot[i])
