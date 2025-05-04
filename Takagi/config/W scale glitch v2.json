@@ -1,1 +1,1 @@
-{"scale": 0.7000000000000001, "n_max": 7, "penWidth": 0.2, "stroke_iteration_scale": 3, "w": 0.7, "page_scale": 18, "negative_plot_offset": 1.4, "__seed__": 0}
+{"scale": 0.7000000000000001, "n_max": 7, "penWidth": 0.2, "stroke_iteration_scale": 3, "w": 0.7, "page_scale": 18, "negative_plot_offset": 1.4, "plot_negative": true, "plot_positive": true, "glitch_w": true, "__seed__": 0}
