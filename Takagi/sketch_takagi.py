@@ -18,9 +18,11 @@ class TakagiSketch(vsketch.SketchClass):
     plot_positive = vsketch.Param(True)
     glitch_w = vsketch.Param(True)
     negative_layer = vsketch.Param(False)
+    iteration_layer = vsketch.Param(False)
+    paper_size = vsketch.Param("a4",choices = ["a4","a5","a6","10cmx10cm"])
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
-        vsk.size("a4", landscape=False)
+        vsk.size(self.paper_size, landscape=False)
         vsk.scale("cm")
         vsk.pushMatrix()
         vsk.scale(self.page_scale)
@@ -32,38 +34,45 @@ class TakagiSketch(vsketch.SketchClass):
         x_points = [(x/2**(self.n_max+1))-1 for x in range(1+2**(self.n_max+1))]
         y = [0 for x in range(1+2**(self.n_max+1))]
         y_neg = [-self.negative_plot_offset for x in range(1+2**(self.n_max+1))]
-     
+        layer = 0
         for n in range(self.n_max+1):
             y_add = [-s_fun(x,n,self.w) for x,y in zip(x_points,y)]
             y_plot = [y + self.scale*y_1 for y,y_1 in zip(y,y_add)]
-            y_neg_plot = [y_neg + self.scale * (neg_w**(n+1)+y_1) for y_neg,y_1 in zip(y_neg,y_add)  ]
             stroke = math.ceil((self.n_max+1.-n)/self.stroke_iteration_scale)
 
             vsk.strokeWeight(stroke)
-            for i in range(len(x_points)):
-                if self.plot_positive:
-                    vsk.stroke(1)
-                    vsk.pushMatrix()
-                    vsk.translate(0,-stroke*n*self.penWidth/10/self.page_scale)
-                    vsk.line(x_points[i],y[i],x_points[i],y_plot[i])
-                    vsk.popMatrix()
-                if self.plot_negative:
-                    if self.negative_layer:
-                        vsk.stroke(2)
-                    else:
-                        vsk.stroke(1)
-                    vsk.pushMatrix()
-                    vsk.translate(0,stroke*n*self.penWidth/10/self.page_scale)
-                    vsk.line(x_points[i],y_neg[i],x_points[i],y_neg_plot[i])
-                    vsk.popMatrix()
+            if self.plot_positive:
+                vsk.stroke(layer+1)
+                vsk.translate(0,-stroke*self.penWidth/10/self.page_scale)
+                for i in range(len(x_points)):
+                    vsk.line(x_points[i],y[i],x_points[i],y_plot[i]+1e-6)
             y = [y + y_1 for y,y_1 in zip(y,y_add)]
-            y_neg = [y_neg + (neg_w**(n+1)+y_1) for y_neg,y_1 in zip(y_neg,y_add)]
+            if self.iteration_layer:
+                layer = (layer + 1) % 2
+
+        
+        if self.plot_negative:
+            if self.negative_layer:
+                layer = 1
+            for n in range(self.n_max+1):
+                y_add = [-s_fun(x,n,self.w) for x,y in zip(x_points,y)]
+                y_neg_add = [ (neg_w**(n+1)+y_1) for y_neg,y_1 in zip(y_neg,y_add)]
+                y_neg_plot = [y_neg + self.scale * y_1 for y_neg,y_1 in zip(y_neg,y_neg_add)  ]
+                stroke = math.ceil((self.n_max+1.-n)/self.stroke_iteration_scale)
+                vsk.strokeWeight(stroke)
+                vsk.stroke(layer+1)
+                vsk.translate(0,stroke*self.penWidth/10/self.page_scale)
+                for i in range(len(x_points)):
+                    vsk.line(x_points[i],y_neg[i],x_points[i],y_neg_plot[i]+1e-6)
+                y_neg = [y_neg + y_1 for y_neg,y_1 in zip(y_neg,y_neg_add)]
+                if self.iteration_layer:
+                    layer = (layer + 1) % 2
                
         vsk.popMatrix()
 
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
-        vsk.vpype("linemerge linesimplify reloop linesort")
+        vsk.vpype("")
 
 
 if __name__ == "__main__":
