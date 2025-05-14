@@ -8,7 +8,7 @@ def s_fun(x,n,w):
 class TakagiSketch(vsketch.SketchClass):
     # Sketch parameters:
     scale = vsketch.Param(0.6)
-    n_max = vsketch.Param(5)
+    n_max = vsketch.Param(5,min_value = 0)
     penWidth = vsketch.Param(0.2,decimals=2)
     stroke_iteration_scale = vsketch.Param(1,min_value =1, max_value=9)
     w = vsketch.Param(0.5,decimals=3,min_value=0,max_value=1)
@@ -20,6 +20,7 @@ class TakagiSketch(vsketch.SketchClass):
     negative_layer = vsketch.Param(False)
     iteration_layer = vsketch.Param(False)
     paper_size = vsketch.Param("a4",choices = ["a4","a5","a6","10cmx10cm"])
+    title = vsketch.Param("")
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size(self.paper_size, landscape=False)
@@ -69,7 +70,8 @@ class TakagiSketch(vsketch.SketchClass):
                     layer = (layer + 1) % 2
                
         vsk.popMatrix()
-
+        vsk.textMode("label")
+        vsk.text(text = self.title, x=-1,y=1,size = "8pt",align='right')
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("")
