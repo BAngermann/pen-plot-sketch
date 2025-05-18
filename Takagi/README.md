@@ -22,10 +22,12 @@ The parameters have the following function:
   <dt><strong>plot_negative</strong></dt>
   <dd>Toggle if the negative part of the plot should be drawn.</dd>  
   <dt><strong>plot_positive</strong></dt>
-  <dd>Toggle if the Takagi function should be drawn.</dd>  
+  <dd>Toggle if the Takagi function should be drawn.</dd> 
+  <dt><strong>glitch_w</strong></dt>
+  <dd>Toggle if the the 'w' parameter for the negative part should alwaus be kept at 0.5</dd>  
 </dl>
     
-    glitch_w = vsketch.Param(True)
+
     negative_layer = vsketch.Param(False)
     iteration_layer = vsketch.Param(False)
     paper_size = vsketch.Param("a4",choices = ["a4","a5","a6","10cmx10cm"])
