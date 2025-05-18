@@ -41,6 +41,9 @@ class TreeringsSketch(vsketch.SketchClass):
     growth_noise = vsketch.Param(0.5, min_value = 0,max_value = 1  )
     noise_offset_x= vsketch.Param(1.0, min_value = -3,max_value = 3,step = 0.1 ,decimals = 2 )
     slice_thickness = vsketch.Param(0.1, min_value = 0.01,max_value = 1  )
+    num_cols = vsketch.Param(4, min_value = 1,max_value = 10  )
+    num_rows = vsketch.Param(4, min_value = 1,max_value = 10  )
+
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size("a4", landscape=False)
         vsk.scale("cm")
@@ -48,44 +51,47 @@ class TreeringsSketch(vsketch.SketchClass):
         n = self.n_segments
         n_rings = self.n_rings
         yearly_growth = [math.exp(vsk.randomGaussian()/1.5)*self.linear_thickness for year in range(n_rings)]
-        num_cols = 3
-        slice = 0
-        for columns in range(num_cols):
-            vsk.translate(sum(yearly_growth),0)
-            ring = [Point(self.r_start*math.cos(i*2*math.pi/n  ),self.r_start*math.sin(i*2*math.pi/n)) for i in range(n)]
-            growth = [Point(0,0) for i in range(n)]
 
-            for year in range(n_rings):
-                thickness = yearly_growth[year]
-                for i in range(n):
-                    p = ring[i]
-                    p_a = ring[(i+1)%n]
-                    p_b = ring[(i-1)%n]
-                    vsk.line(p.x,p.y,p_a.x,p_a.y )
-                    noise_value = vsk.noise(self.noise_offset_x+p.x,p.y,slice*self.slice_thickness)
-                    growth[i] = p.normal(p_b,p_a).scale(thickness*(self.fixed_growth+self.growth_noise*noise_value))
-                    #vsk.stroke(2)
-                    #vsk.line(p.x,p.y,p.x+growth[i].x,p.y+growth[i].y)
-                    #vsk.stroke(1)
-                for i in range(n):  
-                    ring[i] = ring[i]+growth[i]
-                for i in range(self.relaxation_iterations):
-                    distances = [ring[i].dist(ring[(i+1)%n]) for i in range(n)]
-                    mean_dist = sum(distances)/n
-                    for j in range(n):
-                        if distances[j] < mean_dist:
-                    # depending which adjacent segment is longer, move the vertex along the segment to increase the length of the segment
-                            if distances[(j+1)%n] > distances[(j-1)%n] :
-                                old = ring[(j+1)%n]
-                                next = ring[(j+2)%n]
-                                move = (next - old).scale(self.relaxation_increment)
-                                ring[(j+1)%n] = old + move
-                            else:
-                                old = ring[j]
-                                next = ring[(j-1)%n]
-                                move = (next - old).scale(self.relaxation_increment)
-                                ring[j] = old + move
-            slice += 1
+        slice = 0
+        for columns in range(self.num_cols):
+            vsk.pushMatrix()
+            for columns in range(self.num_cols):
+                ring = [Point(self.r_start*math.cos(i*2*math.pi/n  ),self.r_start*math.sin(i*2*math.pi/n)) for i in range(n)]
+                growth = [Point(0,0) for i in range(n)]
+
+                for year in range(n_rings):
+                    thickness = yearly_growth[year]
+                    for i in range(n):
+                        p = ring[i]
+                        p_a = ring[(i+1)%n]
+                        p_b = ring[(i-1)%n]
+                        vsk.line(p.x,p.y,p_a.x,p_a.y )
+                        noise_value = vsk.noise(self.noise_offset_x+p.x,p.y,slice*self.slice_thickness)
+                        growth[i] = p.normal(p_b,p_a).scale(thickness*(self.fixed_growth+self.growth_noise*noise_value))
+
+                    for i in range(n):  
+                        ring[i] = ring[i]+growth[i]
+                    for i in range(self.relaxation_iterations):
+                        distances = [ring[i].dist(ring[(i+1)%n]) for i in range(n)]
+                        mean_dist = sum(distances)/n
+                        for j in range(n):
+                            if distances[j] < mean_dist:
+                        # depending which adjacent segment is longer, move the vertex along the segment to increase the length of the segment
+                                if distances[(j+1)%n] > distances[(j-1)%n] :
+                                    old = ring[(j+1)%n]
+                                    next = ring[(j+2)%n]
+                                    move = (next - old).scale(self.relaxation_increment)
+                                    ring[(j+1)%n] = old + move
+                                else:
+                                    old = ring[j]
+                                    next = ring[(j-1)%n]
+                                    move = (next - old).scale(self.relaxation_increment)
+                                    ring[j] = old + move
+                slice += 1
+                vsk.translate(sum(yearly_growth),0)
+            vsk.popMatrix()
+            vsk.translate(0,sum(yearly_growth))
+        
 
 
 
