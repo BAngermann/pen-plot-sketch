@@ -24,16 +24,17 @@ class PenlayertestSketch(vsketch.SketchClass):
         vsk.size("a4", landscape=False)
         vsk.scale("cm")
         stroke = 2
+        fontsize = .3
         penNames = self.penNames.splitlines()
         penNames += [''] * (self.numberOfPens - len(penNames))
-        unitsize = (18/self.numberOfPens)-1
-        gapsize =  unitsize+0.8
+        unitsize = (17/self.numberOfPens)-1
+        gapsize =  unitsize+0.5
         vsk.pushMatrix()
         for row in range(self.numberOfPens):
             
             vsk.pushMatrix()
             vsk.stroke(1)
-            vsk.text(text=penNames[row],x = -.5, y = 0.5*unitsize,size = .2,align = "right")
+            vsk.text(text=penNames[row],x = -.5, y = 0.5*unitsize,size = fontsize,align = "right")
             vsk.stroke(stroke)
             for col in range(self.numberOfPens):
                 self.paintLine(vsk,unitsize,True)
@@ -49,7 +50,7 @@ class PenlayertestSketch(vsketch.SketchClass):
             vsk.pushMatrix()
             vsk.translate(1+.5*unitsize,0)
             vsk.rotate(-90,degrees = True)
-            vsk.text(text=penNames[col],y = -1, x = 0.5*unitsize,size = .2,align = "left")
+            vsk.text(text=penNames[col],y = -1, x = min(0.25*unitsize,2),size = fontsize,align = "left")
             vsk.popMatrix()
             vsk.stroke(stroke)
             for row in range(self.numberOfPens):
