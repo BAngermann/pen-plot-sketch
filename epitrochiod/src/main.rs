@@ -1,6 +1,7 @@
 use whiskers::prelude::*;
 use std::f64::consts::PI;
 use num_integer::lcm;
+use vsvg::{Color, COLORS};
 
 #[sketch_app]  
 struct EpitrochoidSketch {
@@ -16,7 +17,7 @@ struct EpitrochoidSketch {
     #[param(slider, min = 0.0, max = 1.0)]
     winding: f64,
 
-    #[param(slider, min = 1., max = 1000.)]
+    #[param(slider, min = 1., max = 300.)]
     radius: f64,
 
     #[param(slider, min = -4., max = 4.)]
@@ -29,7 +30,12 @@ struct EpitrochoidSketch {
     d_num: usize,
 
     close_path: bool,
-    hypotrochoid: bool
+    hypotrochoid: bool,
+    #[param(slider, min = 1, max = 20)]
+    d_values_layers_modulus: usize,
+        
+    #[param(slider, min = 0.0, max = 1.)]
+    angle_offset_per_d: f64,
    
 }
 
@@ -46,6 +52,8 @@ impl Default for EpitrochoidSketch {
             d_num:1,
             close_path:true,
             hypotrochoid:false,
+            d_values_layers_modulus: 3,
+            angle_offset_per_d: 0.0,
         }
     }
 }
@@ -68,7 +76,7 @@ impl App for EpitrochoidSketch {
             let numpoints: usize = (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 * self.winding) as usize;
             for i in 0..numpoints
             {
-                let angle = (i as f64 * 2. * PI ) / self.num_points as f64;
+                let angle =  2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI ) / self.num_points as f64;
                 let angle2 = ((1. + sign * ratio) / ratio) * angle;
 
                 let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
@@ -78,6 +86,13 @@ impl App for EpitrochoidSketch {
                 cy1 -= d * r * ratio * angle2.sin();
                 points.push(Point::new(cx1,cy1))
             }
+           
+
+            sketch.set_layer(d_i % self.d_values_layers_modulus );
+          
+            // Set the color to one of the predefined colors based on the layer index
+            sketch.color( COLORS[d_i % std::cmp::min(self.d_values_layers_modulus ,19)]);
+            
             sketch.polyline(
             points,
             self.close_path,
