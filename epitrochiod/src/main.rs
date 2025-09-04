@@ -20,6 +20,9 @@ struct EpitrochoidSketch {
     #[param(slider, min = 1., max = 300.)]
     radius: f64,
 
+    #[param(slider, min = 0., max = 3.)]
+    radius_step: f64,
+
     #[param(slider, min = -4., max = 4.)]
     d_min: f64,
 
@@ -49,6 +52,7 @@ impl Default for EpitrochoidSketch {
             denominator: 3,
             winding: 1.0,
             radius:50.0,
+            radius_step:0.0,
             d_min: 1.0,
             d_step: 0.1,
             d_num:1,
@@ -69,12 +73,12 @@ impl App for EpitrochoidSketch {
 
 
         let ratio = self.numerator as f64 / self.denominator as f64;
-        let r = self.radius;
         let cent = 0.0;
         let sign: f64 = if self.hypotrochoid {-1.0} else {1.0};
         let start_angle = self.angle_offset * 2. * PI;
         for d_i in 0..self.d_num
         {
+            let r = self.radius + d_i as f64 * self.radius_step;
             let mut points = Vec::<Point>::new();
             let d = self.d_min + d_i as f64 * self.d_step;
             let numpoints: usize = (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 * self.winding) as usize;
