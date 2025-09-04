@@ -14,7 +14,7 @@ struct EpitrochoidSketch {
     #[param(slider, min = 1, max = 100)]
     denominator: usize,
 
-    #[param(slider, min = 0.0, max = 1.0)]
+    #[param(slider, min = 0.00001, max = 1.0)]
     winding: f64,
 
     #[param(slider, min = 1., max = 300.)]
@@ -23,7 +23,7 @@ struct EpitrochoidSketch {
     #[param(slider, min = -4., max = 4.)]
     d_min: f64,
 
-    #[param(slider, min = 0.01, max = 4.)]
+    #[param(slider, min = 0.0, max = 4.)]
     d_step: f64,
 
     #[param(slider, min = 1, max = 100)]
@@ -36,7 +36,9 @@ struct EpitrochoidSketch {
         
     #[param(slider, min = 0.0, max = 1.)]
     angle_offset_per_d: f64,
-   
+
+    #[param(slider, min = 0.0, max = 1.)]
+    angle_offset: f64,
 }
 
 impl Default for EpitrochoidSketch {
@@ -54,6 +56,7 @@ impl Default for EpitrochoidSketch {
             hypotrochoid:false,
             d_values_layers_modulus: 3,
             angle_offset_per_d: 0.0,
+            angle_offset: 0.0,
         }
     }
 }
@@ -69,6 +72,7 @@ impl App for EpitrochoidSketch {
         let r = self.radius;
         let cent = 0.0;
         let sign: f64 = if self.hypotrochoid {-1.0} else {1.0};
+        let start_angle = self.angle_offset * 2. * PI;
         for d_i in 0..self.d_num
         {
             let mut points = Vec::<Point>::new();
@@ -76,7 +80,7 @@ impl App for EpitrochoidSketch {
             let numpoints: usize = (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 * self.winding) as usize;
             for i in 0..numpoints
             {
-                let angle =  2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI ) / self.num_points as f64;
+                let angle =  start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI ) / self.num_points as f64;
                 let angle2 = ((1. + sign * ratio) / ratio) * angle;
 
                 let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
