@@ -1,5 +1,4 @@
 use whiskers::prelude::*;
-use core::num;
 use std::f64::consts::PI;
 use num_integer::lcm;
 use vsvg::{Color, COLORS};
@@ -42,7 +41,9 @@ struct EpitrochoidSketch {
     #[param(slider, min = 0.0, max = 1.)]
     angle_offset: f64,
     
+    #[param(min = 0, max = 6)]
     num_tiles: usize,
+    layout_index: usize,
 }
 
 impl Default for EpitrochoidSketch {
@@ -62,6 +63,7 @@ impl Default for EpitrochoidSketch {
             angle_offset_per_d: 0.0,
             angle_offset: 0.0,
             num_tiles: 1,
+            layout_index: 0,
         }
     }
 }
@@ -74,22 +76,26 @@ impl App for EpitrochoidSketch {
         let ratio = self.numerator as f64 / self.denominator as f64;
         let cent = 0.0;
         let sign: f64 = if self.hypotrochoid {-1.0} else {1.0};
+        let wrapping_factor = lcm(self.numerator,self.denominator) as f64 / self.denominator as f64;
         let mut start_angle = self.angle_offset * 2. * PI;
-        let grid_layout = SquareGrid::new(self.num_tiles, Some(2));
+        let grid_layout = SquareGrid::new(self.num_tiles, Some(self.layout_index)) ;
         
         
         // allocate a vector of vectors to hold points for each d value
         let mut allpoints = Vec::<Vec<Point>>::new();
+
+
+        let numpoints: usize = (1000.0 * wrapping_factor ) as usize;
+
         // first pass: compute all points to find bounding box
         for d_i in 0..self.d_num
         {
             let r = 20. + d_i as f64 * self.radius_step;
             let mut points = Vec::<Point>::new();
             let d = self.d_min + d_i as f64 * self.d_step;
-            let numpoints: usize = (1000.0*lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
             for i in 0..numpoints
             {
-                let angle =  start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI ) / 1000.;
+                let angle =  wrapping_factor * start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI ) / 1000.;
                 let angle2 = ((1. + sign * ratio) / ratio) * angle;
                 
                 let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
@@ -123,16 +129,14 @@ impl App for EpitrochoidSketch {
         
         ctx.inspect("Overall scale", scale);
         
-        
- 
-        
-
-        
         // split the winding number acroos the number of tiles available in square grid
         let num_tiles = grid_layout.squares().len();
         ctx.inspect("Number of tiles", num_tiles);
         let winding = self.winding / num_tiles as f64;
         ctx.inspect("Winding per tile", winding);
+        
+        
+        let numpoints: usize = 1 + (self.num_points as f64 * lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
         // iterate over the squares in grid layout
         for square in grid_layout.iter_squares()
         {
@@ -143,7 +147,11 @@ impl App for EpitrochoidSketch {
             
             sketch.translate(square.render_pos.0*sketch.width(), -square.render_pos.1*sketch.height());
             sketch.scale(square.render_scale);
-
+            // print the render_scale to the console for debugging
+            println!("Render scale: {}, start {}", square.render_scale,start_angle/2.0/PI);
+            sketch.set_layer( self.d_values_layers_modulus );
+            sketch.color( COLORS[0]);
+            sketch.rect(sketch.width() * 0.5,sketch.width()*0.5,sketch.width(),sketch.width());
             sketch.scale(scale);
             sketch.translate(0.5 / scale *  sketch.width() ,0.5 / scale *  sketch.height() ); 
             for d_i in 0..self.d_num
@@ -151,10 +159,9 @@ impl App for EpitrochoidSketch {
                 let r = 20. + d_i as f64 * self.radius_step;
                 let mut points = Vec::<Point>::new();
                 let d = self.d_min + d_i as f64 * self.d_step;
-                let numpoints: usize = 1 + (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
                 for i in 0..numpoints
                 {
-                    let angle =  start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI * winding ) / self.num_points as f64;
+                    let angle =  wrapping_factor * start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI * winding ) / self.num_points as f64;
                     let angle2 = ((1. + sign * ratio) / ratio) * angle;
                     
                     let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
