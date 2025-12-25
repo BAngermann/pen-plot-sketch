@@ -7,3 +7,5 @@ edition = "2024"
 num-integer = "0.1.46"
 vsvg = "0.5.0"
 whiskers = "0.5.0"
+grid = { path = "../grid" }
+
