@@ -1,6 +1,6 @@
 //! Library API for finding squarings of an n x n grid and working with a chosen solution.
 use rand::Rng;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// Finds all possible ways to divide an `n x n` grid into smaller squares.
 ///
@@ -158,7 +158,7 @@ impl SquareGrid {
 }
 
 fn compute_squares(side: usize, matrix: &Vec<Vec<i32>>, gutter: f64) -> Vec<Square> {
-    let mut map: HashMap<i32, (usize, usize, usize, usize)> = HashMap::new();
+    let mut map: BTreeMap<i32, (usize, usize, usize, usize)> = BTreeMap::new();
     for r in 0..side {
         for c in 0..side {
             let id = matrix[r][c];
