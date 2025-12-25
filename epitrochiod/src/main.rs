@@ -44,6 +44,13 @@ struct EpitrochoidSketch {
     #[param(min = 0, max = 6)]
     num_tiles: usize,
     layout_index: usize,
+
+    #[param(slider, min = 0.0, max = 1.)]
+    top_margin: f64,
+    #[param(slider, min = 0.0, max = 1.)]
+    left_margin: f64,
+    #[param(slider, min = 0.01, max = 1.)]
+    relative_sketch_size: f64,
 }
 
 impl Default for EpitrochoidSketch {
@@ -64,6 +71,9 @@ impl Default for EpitrochoidSketch {
             angle_offset: 0.0,
             num_tiles: 1,
             layout_index: 0,
+            top_margin: 0.05,
+            left_margin: 0.05,
+            relative_sketch_size: 0.9,
         }
     }
 }
@@ -79,7 +89,7 @@ impl App for EpitrochoidSketch {
         let wrapping_factor = lcm(self.numerator,self.denominator) as f64 / self.denominator as f64;
         let mut start_angle = self.angle_offset * 2. * PI;
         let grid_layout = SquareGrid::new(self.num_tiles, Some(self.layout_index)) ;
-        
+        let smaller_size = sketch.width().min(sketch.height());
         
         // allocate a vector of vectors to hold points for each d value
         let mut allpoints = Vec::<Vec<Point>>::new();
@@ -123,8 +133,8 @@ impl App for EpitrochoidSketch {
         let bbox_width = max_x - min_x;   
         let bbox_height = max_y - min_y;
         
-        let scale_x = sketch.width()/bbox_width * 0.8;
-        let scale_y = sketch.height()/bbox_height * 0.8;
+        let scale_x = smaller_size/bbox_width * 0.8;
+        let scale_y = smaller_size/bbox_height * 0.8;
         let scale = scale_x.min(scale_y);
         
         ctx.inspect("Overall scale", scale);
@@ -138,6 +148,8 @@ impl App for EpitrochoidSketch {
         
         let numpoints: usize = 1 + (self.num_points as f64 * lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
         // iterate over the squares in grid layout
+        sketch.translate(sketch.width() * self.left_margin, sketch.height() * self.top_margin );
+        sketch.scale(self.relative_sketch_size);
         for square in grid_layout.iter_squares()
         {
             // get the translation and scale.
@@ -145,15 +157,15 @@ impl App for EpitrochoidSketch {
             
             sketch.push_matrix();
             
-            sketch.translate(square.render_pos.0*sketch.width(), -square.render_pos.1*sketch.height());
+            sketch.translate(square.render_pos.0 * smaller_size, -square.render_pos.1 * smaller_size);
             sketch.scale(square.render_scale);
             // print the render_scale to the console for debugging
             println!("Render scale: {}, start {}", square.render_scale,start_angle/2.0/PI);
             sketch.set_layer( self.d_values_layers_modulus );
             sketch.color( COLORS[0]);
-            sketch.rect(sketch.width() * 0.5,sketch.width()*0.5,sketch.width(),sketch.width());
+            sketch.rect(smaller_size * 0.5,smaller_size * 0.5,smaller_size,smaller_size);
             sketch.scale(scale);
-            sketch.translate(0.5 / scale *  sketch.width() ,0.5 / scale *  sketch.height() ); 
+            sketch.translate(0.5 / scale *  smaller_size ,0.5 / scale *  smaller_size ); 
             for d_i in 0..self.d_num
             {
                 let r = 20. + d_i as f64 * self.radius_step;
