@@ -1,4 +1,5 @@
 use whiskers::prelude::*;
+use core::num;
 use std::f64::consts::PI;
 use num_integer::lcm;
 use vsvg::{Color, COLORS};
@@ -40,7 +41,7 @@ struct EpitrochoidSketch {
     
     #[param(slider, min = 0.0, max = 1.)]
     angle_offset: f64,
-
+    
     num_tiles: usize,
 }
 
@@ -66,14 +67,16 @@ impl Default for EpitrochoidSketch {
 }
 
 impl App for EpitrochoidSketch {
-    fn update(&mut self, sketch: &mut Sketch, _ctx: &mut Context) -> anyhow::Result<()> {
+    fn update(&mut self, sketch: &mut Sketch, ctx: &mut Context) -> anyhow::Result<()> {
         sketch.color(Color::DARK_RED)
         .stroke_width(0.3*Unit::Mm);
         
         let ratio = self.numerator as f64 / self.denominator as f64;
         let cent = 0.0;
         let sign: f64 = if self.hypotrochoid {-1.0} else {1.0};
-        let start_angle = self.angle_offset * 2. * PI;
+        let mut start_angle = self.angle_offset * 2. * PI;
+        let grid_layout = SquareGrid::new(self.num_tiles, Some(2));
+        
         
         // allocate a vector of vectors to hold points for each d value
         let mut allpoints = Vec::<Vec<Point>>::new();
@@ -118,43 +121,62 @@ impl App for EpitrochoidSketch {
         let scale_y = sketch.height()/bbox_height * 0.8;
         let scale = scale_x.min(scale_y);
         
+        ctx.inspect("Overall scale", scale);
         
-        allpoints = Vec::<Vec<Point>>::new();
         
-        for d_i in 0..self.d_num
-        {
-            let r = 20. + d_i as f64 * self.radius_step;
-            let mut points = Vec::<Point>::new();
-            let d = self.d_min + d_i as f64 * self.d_step;
-            let numpoints: usize = 1 + (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
-            for i in 0..numpoints
-            {
-                let angle =  start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI * self.winding ) / self.num_points as f64;
-                let angle2 = ((1. + sign * ratio) / ratio) * angle;
-                
-                let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
-                let mut cy1 = cent + (r + sign * r * ratio) * angle.sin();
-                
-                cx1 -= d * sign * r * ratio * angle2.cos();
-                cy1 -= d * r * ratio * angle2.sin();
-                points.push(Point::new(cx1,cy1))
-            }
-            allpoints.push(points);
-        } 
+ 
+        
 
         
-        sketch.scale(scale);
-        sketch.translate(0.5 / scale *  sketch.width() ,
-        0.5 / scale *  sketch.height() ); 
-        for d_i in 0..self.d_num
+        // split the winding number acroos the number of tiles available in square grid
+        let num_tiles = grid_layout.squares().len();
+        ctx.inspect("Number of tiles", num_tiles);
+        let winding = self.winding / num_tiles as f64;
+        ctx.inspect("Winding per tile", winding);
+        // iterate over the squares in grid layout
+        for square in grid_layout.iter_squares()
         {
-            sketch.set_layer(d_i % self.d_values_layers_modulus );
+            // get the translation and scale.
+            //  then draw the partial sketch with the reduced winding 
             
-            // Set the color to one of the predefined colors based on the layer index
-            sketch.color( COLORS[d_i % std::cmp::min(self.d_values_layers_modulus ,19)]);
+            sketch.push_matrix();
             
-            sketch.polyline( std::mem::take(&mut allpoints[d_i]),self.close_path);
+            sketch.translate(square.render_pos.0*sketch.width(), -square.render_pos.1*sketch.height());
+            sketch.scale(square.render_scale);
+
+            sketch.scale(scale);
+            sketch.translate(0.5 / scale *  sketch.width() ,0.5 / scale *  sketch.height() ); 
+            for d_i in 0..self.d_num
+            {
+                let r = 20. + d_i as f64 * self.radius_step;
+                let mut points = Vec::<Point>::new();
+                let d = self.d_min + d_i as f64 * self.d_step;
+                let numpoints: usize = 1 + (self.num_points as f64 *lcm(self.numerator,self.denominator) as f64 / self.denominator as f64 ) as usize;
+                for i in 0..numpoints
+                {
+                    let angle =  start_angle + 2. * PI * self.angle_offset_per_d * d_i as f64 + (i as f64 * 2. * PI * winding ) / self.num_points as f64;
+                    let angle2 = ((1. + sign * ratio) / ratio) * angle;
+                    
+                    let mut cx1 = cent + (r + sign * r * ratio) * angle.cos();
+                    let mut cy1 = cent + (r + sign * r * ratio) * angle.sin();
+                    
+                    cx1 -= d * sign * r * ratio * angle2.cos();
+                    cy1 -= d * r * ratio * angle2.sin();
+                    points.push(Point::new(cx1,cy1))
+                }
+                sketch.set_layer(d_i % self.d_values_layers_modulus );
+                
+                // Set the color to one of the predefined colors based on the layer index
+                sketch.color( COLORS[d_i % std::cmp::min(self.d_values_layers_modulus ,19)]);
+                
+                sketch.polyline( points,self.close_path);
+            } 
+            
+            sketch.pop_matrix();
+            start_angle += 2. * PI * winding ;
         }
+        
+        
         
         
         Ok(())
