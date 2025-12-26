@@ -51,6 +51,8 @@ struct EpitrochoidSketch {
     left_margin: f64,
     #[param(slider, min = 0.01, max = 1.)]
     relative_sketch_size: f64,
+    draw_bounding_box: bool,
+    color_by_tile: bool,
 }
 
 impl Default for EpitrochoidSketch {
@@ -74,6 +76,8 @@ impl Default for EpitrochoidSketch {
             top_margin: 0.05,
             left_margin: 0.05,
             relative_sketch_size: 0.9,
+            draw_bounding_box: true,
+            color_by_tile: false,
         }
     }
 }
@@ -161,9 +165,17 @@ impl App for EpitrochoidSketch {
             sketch.scale(square.render_scale);
             // print the render_scale to the console for debugging
             println!("Render scale: {}, start {}", square.render_scale,start_angle/2.0/PI);
-            sketch.set_layer( self.d_values_layers_modulus );
-            sketch.color( COLORS[0]);
-            sketch.rect(smaller_size * 0.5,smaller_size * 0.5,smaller_size,smaller_size);
+            if self.draw_bounding_box {
+                sketch.set_layer( self.d_values_layers_modulus );
+                sketch.color( COLORS[0]);
+                sketch.rect(smaller_size * 0.5,smaller_size * 0.5,smaller_size,smaller_size);
+            }
+
+            if self.color_by_tile 
+            {
+                    sketch.set_layer(square.id as usize % self.d_values_layers_modulus );
+                    sketch.color( COLORS[square.id as usize % std::cmp::min(self.d_values_layers_modulus ,19)]);
+            }
             sketch.scale(scale);
             sketch.translate(0.5 / scale *  smaller_size ,0.5 / scale *  smaller_size ); 
             for d_i in 0..self.d_num
@@ -183,11 +195,13 @@ impl App for EpitrochoidSketch {
                     cy1 -= d * r * ratio * angle2.sin();
                     points.push(Point::new(cx1,cy1))
                 }
-                sketch.set_layer(d_i % self.d_values_layers_modulus );
-                
-                // Set the color to one of the predefined colors based on the layer index
-                sketch.color( COLORS[d_i % std::cmp::min(self.d_values_layers_modulus ,19)]);
-                
+
+                if !self.color_by_tile 
+                {
+                    sketch.set_layer(d_i % self.d_values_layers_modulus );
+                    sketch.color( COLORS[d_i % std::cmp::min(self.d_values_layers_modulus ,19)]);
+                }
+ 
                 sketch.polyline( points,self.close_path);
             } 
             
