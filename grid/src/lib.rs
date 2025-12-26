@@ -88,6 +88,8 @@ pub struct Square {
     pub col: usize,
     /// size of the square in units of tiles of the grid
     pub size: usize,
+    /// the index of the tile in the solution matrix
+    pub id: i32,
     /// x and y position when rendered, relative to a fraction of the total width/height.
     pub render_pos: (f64, f64),
     /// scale of the tile when rendered, relative to the total width/height.
@@ -192,6 +194,7 @@ fn compute_squares(side: usize, matrix: &Vec<Vec<i32>>, gutter: f64) -> Vec<Squa
             row: min_r,
             col: min_c,
             size,
+            id: matrix[min_r][min_c],
             render_pos: (render_pos_x, render_pos_y),
             render_scale,
         });
