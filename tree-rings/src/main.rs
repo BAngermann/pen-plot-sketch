@@ -100,10 +100,9 @@ struct TreeRingsSketch {
     noise_offset_x: f32, 
     #[param(slider, min = 0.01, max = 1.0)]
     slice_thickness: f32,
-    #[param(slider, min = 1, max = 10)]
-    num_cols: usize, 
-    #[param(slider, min = 1, max = 10)]
-    num_rows: usize, 
+    #[param(min = 0, max = 6)]
+    num_tiles: usize,
+    layout_index: usize,
     
 }
 
@@ -118,11 +117,11 @@ impl Default for TreeRingsSketch {
             relaxation_iterations: 2,
             growth_iterations: 5,
             fixed_growth: 0.1,
-            growth_noise: 0.5,
+            growth_noise: 0.07,
             noise_offset_x: 1.0,
             slice_thickness: 0.1,
-            num_cols: 4,
-            num_rows: 4,
+            num_tiles: 4,
+            layout_index: 4,
         }
     }
 }
@@ -130,27 +129,34 @@ impl Default for TreeRingsSketch {
 impl App for TreeRingsSketch {
     fn update(&mut self, sketch: &mut Sketch, ctx: &mut Context) -> anyhow::Result<()> {
         sketch.color(Color::BLACK).stroke_width(0.03 * Unit::Mm);
-        sketch.scale(10.);
+        
         
         let smaller_size = sketch.width().min(sketch.height());
         let n = self.n_segments;
         let n_rings = self.n_rings;
-        //let mut rng = rand::rng();
         let yearly_growth: Vec<f32> = (0..n_rings)
         .map(|_| {
             self.linear_thickness * (ctx.rng.sample::<f32, _>(StandardNormal) / 1.5).exp()
         })
         .collect();
         
-        let slice: usize = 0;
-        //let fbm = &Fbm::<Perlin>::default();
-        let perlin = Fbm::<Perlin>::new(1)
+        // summing up the growth to get the total growth as an estimet for the bounding box size
+        let mut total_growth = 0.0;
+        for growth in &yearly_growth {
+            total_growth += *growth;
+        }
+
+
+        let mut slice: usize = 0;
+        let seed = ctx.rng.get_seed();
+        
+        let perlin = Fbm::<Perlin>::new(seed[0] as u32 + seed[1] as u32 * 256 + seed[2] as u32 * 256 * 256)
         .set_frequency(1.0)
         .set_persistence(0.5)
         .set_lacunarity(2.0)
         .set_octaves(4);
         
-        let grid_layout = SquareGrid::new(1, Some(1)) ;
+        let grid_layout = SquareGrid::new(self.num_tiles, Some(self.layout_index)) ;
         
         for square in grid_layout.iter_squares()
         {
@@ -162,8 +168,12 @@ impl App for TreeRingsSketch {
             
             sketch.set_layer( 1);
             
-            //sketch.rect(smaller_size * 0.5,smaller_size * 0.5,smaller_size,smaller_size);
+            sketch.rect(smaller_size * 0.5,smaller_size * 0.5,smaller_size,smaller_size);
             
+            let scale = smaller_size/ (2.0 * (self.r_start +  self.fixed_growth * total_growth) as f64 );
+            sketch.scale(scale );
+            sketch.translate(0.5 / scale *  smaller_size ,0.5 / scale *  smaller_size ); 
+
             let mut ring: Vec<Point> = (0..n)
             .map(|i| {
                 let angle = i as f32 * 2.0 * PI / n as f32;
@@ -235,6 +245,7 @@ impl App for TreeRingsSketch {
                     }
                 }
                 sketch.pop_matrix();
+                slice += 1;
             }
             
             Ok(())
