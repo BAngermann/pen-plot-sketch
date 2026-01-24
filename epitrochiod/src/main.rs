@@ -49,7 +49,7 @@ struct EpitrochoidSketch {
     top_margin: f64,
     #[param(slider, min = 0.0, max = 1.)]
     left_margin: f64,
-    #[param(slider, min = 0.01, max = 1.)]
+    #[param(slider, min = 0.1, max = 1.5)]
     relative_sketch_size: f64,
     draw_bounding_box: bool,
     color_by_tile: bool,
