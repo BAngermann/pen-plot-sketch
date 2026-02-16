@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/asemic-core", "crates/glyph-editor"]
+resolver = "3"
