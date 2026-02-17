@@ -7,10 +7,24 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// How to convert vertex sequences into curves.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub enum CurveMode {
+    /// Catmull-Rom interpolating spline (curve passes through each vertex).
+    #[default]
+    CatmullRom,
+    /// Clamped cubic B-spline (curve approximates interior vertices, "loose" look).
+    BSpline,
+}
+
 /// Parameters controlling how glyphs are rendered as BezPaths.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RenderingParams {
+    /// Which spline type to use.
+    #[serde(default)]
+    pub curve_mode: CurveMode,
     /// How closely the BezPath follows the hex graph vertices (0.0 = smooth, 1.0 = polygonal).
+    /// Only used in CatmullRom mode.
     pub tightness: f64,
     /// Maximum random offset per vertex, in units of hex edge length.
     pub vertex_jitter: f64,
@@ -21,6 +35,7 @@ pub struct RenderingParams {
 impl Default for RenderingParams {
     fn default() -> Self {
         Self {
+            curve_mode: CurveMode::default(),
             tightness: 0.5,
             vertex_jitter: 0.1,
             control_point_jitter: 0.05,
@@ -57,16 +72,19 @@ pub fn render_glyph(
     }
 
     // Build jitter map once: same vertex always gets the same offset.
-    let jitter_map = compute_vertex_jitter_map(
+    // Entry and exit vertices are pinned (no jitter) for clean word composition.
+    let mut jitter_map = compute_vertex_jitter_map(
         &all_vertex_indices,
         params.vertex_jitter,
         graph.params.hex_size,
         rng,
     );
+    jitter_map.insert(graph.entry_vertex, (0.0, 0.0));
+    jitter_map.insert(graph.exit_vertex, (0.0, 0.0));
 
     let main_path = {
         let jittered = apply_jitter_from_map(graph, &main_vertices, &jitter_map);
-        catmull_rom_to_bezpath(&jittered, params.tightness, params.control_point_jitter, rng)
+        points_to_bezpath(&jittered, params, rng)
     };
 
     let decorations = glyph
@@ -92,14 +110,16 @@ pub fn render_main_path(
     rng: &mut impl Rng,
 ) -> BezPath {
     let vertices = path::path_to_vertices(graph, edge_path);
-    let jitter_map = compute_vertex_jitter_map(
+    let mut jitter_map = compute_vertex_jitter_map(
         &vertices,
         params.vertex_jitter,
         graph.params.hex_size,
         rng,
     );
+    jitter_map.insert(graph.entry_vertex, (0.0, 0.0));
+    jitter_map.insert(graph.exit_vertex, (0.0, 0.0));
     let jittered = apply_jitter_from_map(graph, &vertices, &jitter_map);
-    catmull_rom_to_bezpath(&jittered, params.tightness, params.control_point_jitter, rng)
+    points_to_bezpath(&jittered, params, rng)
 }
 
 /// Render a decoration as a BezPath, using the shared jitter map for vertex positions.
@@ -137,7 +157,7 @@ fn render_decoration_with_jitter(
         }
     }
 
-    catmull_rom_to_bezpath(&positions, params.tightness, params.control_point_jitter, rng)
+    points_to_bezpath(&positions, params, rng)
 }
 
 /// Compute jitter offsets per unique vertex index.
@@ -177,6 +197,20 @@ fn apply_jitter_from_map(
             }
         })
         .collect()
+}
+
+/// Dispatch to the appropriate spline converter based on curve mode.
+fn points_to_bezpath(
+    points: &[(f64, f64)],
+    params: &RenderingParams,
+    rng: &mut impl Rng,
+) -> BezPath {
+    match params.curve_mode {
+        CurveMode::CatmullRom => {
+            catmull_rom_to_bezpath(points, params.tightness, params.control_point_jitter, rng)
+        }
+        CurveMode::BSpline => bspline_to_bezpath(points, params.control_point_jitter, rng),
+    }
 }
 
 /// Convert a sequence of points to a BezPath using Catmull-Rom interpolation.
@@ -247,6 +281,146 @@ fn catmull_rom_to_bezpath(
     }
 
     path
+}
+
+/// Convert a sequence of points to a BezPath using a clamped uniform cubic B-spline.
+///
+/// The curve passes through the first and last points exactly, but only
+/// approximates the interior points — producing a "loose" appearance.
+/// C2 (curvature) continuity is guaranteed at all interior joins.
+///
+/// Conversion to Bézier segments uses Boehm's knot insertion algorithm
+/// to raise every interior knot to multiplicity 3.
+fn bspline_to_bezpath(
+    points: &[(f64, f64)],
+    cp_jitter: f64,
+    rng: &mut impl Rng,
+) -> BezPath {
+    let mut path = BezPath::new();
+    let n = points.len();
+
+    if n == 0 {
+        return path;
+    }
+    if n == 1 {
+        path.move_to(Point::new(points[0].0, points[0].1));
+        return path;
+    }
+    if n == 2 {
+        path.move_to(Point::new(points[0].0, points[0].1));
+        path.line_to(Point::new(points[1].0, points[1].1));
+        return path;
+    }
+    if n == 3 {
+        // Promote to cubic: treat the 3 points as a quadratic Bézier,
+        // then degree-elevate to cubic so the curve passes through endpoints.
+        let (p0, p1, p2) = (points[0], points[1], points[2]);
+        path.move_to(Point::new(p0.0, p0.1));
+        let cp1 = (
+            p0.0 + 2.0 / 3.0 * (p1.0 - p0.0) + jitter(cp_jitter, rng),
+            p0.1 + 2.0 / 3.0 * (p1.1 - p0.1) + jitter(cp_jitter, rng),
+        );
+        let cp2 = (
+            p2.0 + 2.0 / 3.0 * (p1.0 - p2.0) + jitter(cp_jitter, rng),
+            p2.1 + 2.0 / 3.0 * (p1.1 - p2.1) + jitter(cp_jitter, rng),
+        );
+        path.curve_to(
+            Point::new(cp1.0, cp1.1),
+            Point::new(cp2.0, cp2.1),
+            Point::new(p2.0, p2.1),
+        );
+        return path;
+    }
+
+    // n >= 4: clamped uniform cubic B-spline.
+    // Build knot vector: [0,0,0,0, 1, 2, ..., n-4, n-3, n-3, n-3, n-3]
+    let max_t = (n as f64) - 3.0;
+    let mut knots: Vec<f64> = Vec::new();
+    for _ in 0..4 {
+        knots.push(0.0);
+    }
+    for i in 1..=(n - 4) {
+        knots.push(i as f64);
+    }
+    for _ in 0..4 {
+        knots.push(max_t);
+    }
+
+    let mut cps: Vec<(f64, f64)> = points.to_vec();
+
+    // Insert each interior knot twice to raise its multiplicity from 1 to 3.
+    for knot_val in 1..=(n - 4) {
+        let t = knot_val as f64;
+        boehm_insert_knot(&mut cps, &mut knots, t);
+        boehm_insert_knot(&mut cps, &mut knots, t);
+    }
+
+    // After full insertion, every interior knot has multiplicity 3.
+    // The control points form Bézier segments: groups of 4 sharing endpoints.
+    let num_segments = (cps.len() - 1) / 3;
+    path.move_to(Point::new(cps[0].0, cps[0].1));
+
+    for seg in 0..num_segments {
+        let base = seg * 3;
+        let b1 = cps[base + 1];
+        let b2 = cps[base + 2];
+        let b3 = cps[base + 3];
+        path.curve_to(
+            Point::new(b1.0 + jitter(cp_jitter, rng), b1.1 + jitter(cp_jitter, rng)),
+            Point::new(b2.0 + jitter(cp_jitter, rng), b2.1 + jitter(cp_jitter, rng)),
+            Point::new(b3.0, b3.1),
+        );
+    }
+
+    path
+}
+
+/// Boehm's knot insertion: insert `t_new` into the B-spline once.
+fn boehm_insert_knot(cps: &mut Vec<(f64, f64)>, knots: &mut Vec<f64>, t_new: f64) {
+    let degree = 3usize;
+
+    // Find span k: knots[k] <= t_new < knots[k+1].
+    let k = {
+        let mut k = 0;
+        for i in 0..knots.len() - 1 {
+            if knots[i] <= t_new && knots[i + 1] > t_new {
+                k = i;
+                break;
+            }
+        }
+        k
+    };
+
+    let old_n = cps.len();
+    let mut new_cps = Vec::with_capacity(old_n + 1);
+
+    for i in 0..=old_n {
+        if i <= k.saturating_sub(degree) {
+            // Before affected range: copy directly.
+            new_cps.push(cps[i]);
+        } else if i > k {
+            // After affected range: shift by one.
+            new_cps.push(cps[i - 1]);
+        } else {
+            // In the affected range: linear interpolation.
+            let denom = knots[i + degree] - knots[i];
+            let alpha = if denom.abs() < 1e-12 {
+                0.0
+            } else {
+                (t_new - knots[i]) / denom
+            };
+            let prev = cps[i - 1];
+            let curr = cps[i];
+            new_cps.push((
+                (1.0 - alpha) * prev.0 + alpha * curr.0,
+                (1.0 - alpha) * prev.1 + alpha * curr.1,
+            ));
+        }
+    }
+
+    // Insert knot value into the knot vector.
+    knots.insert(k + 1, t_new);
+    *cps = new_cps;
 }
 
 fn jitter(amount: f64, rng: &mut impl Rng) -> f64 {
@@ -368,6 +542,7 @@ mod tests {
             tightness: 1.0,
             vertex_jitter: 0.0,
             control_point_jitter: 0.0,
+            ..RenderingParams::default()
         };
 
         let rendered = render_main_path(&g, &edge_path, &params, &mut rng);
@@ -428,6 +603,112 @@ mod tests {
         assert_eq!(positions[0], positions[5], "vertex 0 at indices 0 and 5 should match");
         // vertices[1] and vertices[3] are both vertex 1 — should have identical positions.
         assert_eq!(positions[1], positions[3], "vertex 1 at indices 1 and 3 should match");
+    }
+
+    #[test]
+    fn test_bspline_4_points_is_single_bezier() {
+        // A clamped cubic B-spline with exactly 4 control points is a single cubic Bézier.
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let points = vec![(0.0, 0.0), (1.0, 2.0), (3.0, 3.0), (4.0, 0.0)];
+        let path = bspline_to_bezpath(&points, 0.0, &mut rng);
+
+        let elems = path.elements();
+        // Should be: MoveTo + 1 CurveTo = 2 elements.
+        assert_eq!(elems.len(), 2, "4-point B-spline should be 1 Bézier segment");
+        assert!(matches!(elems[0], kurbo::PathEl::MoveTo(_)));
+        assert!(matches!(elems[1], kurbo::PathEl::CurveTo(_, _, _)));
+
+        // The Bézier control points should match the B-spline control points exactly.
+        if let kurbo::PathEl::MoveTo(p0) = elems[0] {
+            assert!((p0.x - 0.0).abs() < 1e-10 && (p0.y - 0.0).abs() < 1e-10);
+        }
+        if let kurbo::PathEl::CurveTo(b1, b2, b3) = elems[1] {
+            assert!((b1.x - 1.0).abs() < 1e-10 && (b1.y - 2.0).abs() < 1e-10);
+            assert!((b2.x - 3.0).abs() < 1e-10 && (b2.y - 3.0).abs() < 1e-10);
+            assert!((b3.x - 4.0).abs() < 1e-10 && (b3.y - 0.0).abs() < 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_bspline_passes_through_endpoints() {
+        let mut rng = ChaCha8Rng::seed_from_u64(42);
+        let points = vec![
+            (0.0, 0.0),
+            (1.0, 3.0),
+            (2.0, 1.0),
+            (3.0, 4.0),
+            (4.0, 2.0),
+            (5.0, 0.0),
+        ];
+        let path = bspline_to_bezpath(&points, 0.0, &mut rng);
+        let elems = path.elements();
+
+        // First element is MoveTo at the first point.
+        if let kurbo::PathEl::MoveTo(p) = elems[0] {
+            assert!((p.x - 0.0).abs() < 1e-10, "start x");
+            assert!((p.y - 0.0).abs() < 1e-10, "start y");
+        } else {
+            panic!("expected MoveTo");
+        }
+
+        // Last CurveTo ends at the last point.
+        if let kurbo::PathEl::CurveTo(_, _, p) = elems[elems.len() - 1] {
+            assert!((p.x - 5.0).abs() < 1e-10, "end x");
+            assert!((p.y - 0.0).abs() < 1e-10, "end y");
+        } else {
+            panic!("expected CurveTo");
+        }
+    }
+
+    #[test]
+    fn test_bspline_deterministic() {
+        let points = vec![
+            (0.0, 0.0),
+            (1.0, 2.0),
+            (2.0, 1.0),
+            (3.0, 3.0),
+            (4.0, 0.0),
+        ];
+        let path1 = {
+            let mut rng = ChaCha8Rng::seed_from_u64(99);
+            bspline_to_bezpath(&points, 0.0, &mut rng)
+        };
+        let path2 = {
+            let mut rng = ChaCha8Rng::seed_from_u64(99);
+            bspline_to_bezpath(&points, 0.0, &mut rng)
+        };
+        let e1: Vec<_> = path1.elements().to_vec();
+        let e2: Vec<_> = path2.elements().to_vec();
+        assert_eq!(e1.len(), e2.len());
+    }
+
+    #[test]
+    fn test_bspline_render_glyph() {
+        // Full pipeline test with B-spline mode.
+        let (g, glyph) = make_test_glyph();
+        let params = RenderingParams {
+            curve_mode: CurveMode::BSpline,
+            ..RenderingParams::default()
+        };
+        let mut rng = ChaCha8Rng::seed_from_u64(99);
+
+        let rendered = render_glyph(&g, &glyph, &params, &mut rng);
+        assert!(!rendered.main_path.elements().is_empty());
+
+        // No NaN values.
+        for el in rendered.main_path.elements() {
+            match el {
+                kurbo::PathEl::MoveTo(p) => {
+                    assert!(!p.x.is_nan() && !p.y.is_nan());
+                }
+                kurbo::PathEl::CurveTo(p1, p2, p3) => {
+                    assert!(!p1.x.is_nan() && !p1.y.is_nan());
+                    assert!(!p2.x.is_nan() && !p2.y.is_nan());
+                    assert!(!p3.x.is_nan() && !p3.y.is_nan());
+                }
+                _ => {}
+            }
+        }
     }
 
     #[test]

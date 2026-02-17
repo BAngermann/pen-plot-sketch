@@ -3,7 +3,7 @@ use asemic_core::glyph::{self, GlyphDef};
 use asemic_core::graph::{GraphParams, HexGraph};
 use asemic_core::library::{GlyphLibrary, SamplingConstraints};
 use asemic_core::path;
-use asemic_core::render::{self, RenderingParams};
+use asemic_core::render::{self, CurveMode, RenderingParams};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use whiskers::prelude::*;
@@ -35,6 +35,7 @@ struct GlyphEditorSketch {
     max_decorations_per_glyph: usize,
 
     // --- Rendering parameters ---
+    use_bspline: bool,
     #[param(slider, min = 0.0, max = 1.0)]
     tightness: f64,
     #[param(slider, min = 0.0, max = 0.5)]
@@ -83,6 +84,7 @@ impl Default for GlyphEditorSketch {
             max_decoration_branch_length: 2,
             branch_continuation_probability: 0.5,
             max_decorations_per_glyph: 3,
+            use_bspline: false,
             tightness: 0.5,
             vertex_jitter: 0.1,
             control_point_jitter: 0.05,
@@ -112,6 +114,11 @@ impl App for GlyphEditorSketch {
         };
         let graph = HexGraph::new(&graph_params);
         let rendering_params = RenderingParams {
+            curve_mode: if self.use_bspline {
+                CurveMode::BSpline
+            } else {
+                CurveMode::CatmullRom
+            },
             tightness: self.tightness,
             vertex_jitter: self.vertex_jitter,
             control_point_jitter: self.control_point_jitter,
