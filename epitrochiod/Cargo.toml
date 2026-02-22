@@ -8,4 +8,6 @@ num-integer = "0.1.46"
 vsvg = "0.5.0"
 whiskers = "0.5.0"
 grid = { path = "../grid" }
+serde = "1.0.228"
+serde_json = "1.0.149"
 

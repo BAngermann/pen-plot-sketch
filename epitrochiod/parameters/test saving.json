@@ -1,0 +1,22 @@
+{
+  "num_points": 100,
+  "numerator": 10,
+  "denominator": 3,
+  "winding": 1.0,
+  "radius_step": 0.0,
+  "d_min": 1.0,
+  "d_step": 0.1,
+  "d_num": 1,
+  "close_path": true,
+  "hypotrochoid": false,
+  "d_values_layers_modulus": 3,
+  "angle_offset_per_d": 0.0,
+  "angle_offset": 0.0,
+  "num_tiles": 1,
+  "layout_index": 0,
+  "top_margin": 0.05,
+  "left_margin": 0.05,
+  "relative_sketch_size": 0.9,
+  "draw_bounding_box": true,
+  "color_by_tile": false
+}
