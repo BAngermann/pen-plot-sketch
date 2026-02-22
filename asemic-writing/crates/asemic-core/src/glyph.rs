@@ -129,6 +129,7 @@ mod tests {
             max_path_length: 15,
             max_edge_visits: 2,
             max_vertex_visits: 3,
+            ..PathConstraints::default()
         };
         let mut rng = ChaCha8Rng::seed_from_u64(42);
         let main_path = path::generate_path(&g, &c, &mut rng).expect("should generate path");

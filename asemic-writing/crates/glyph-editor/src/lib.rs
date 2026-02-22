@@ -33,6 +33,8 @@ struct GlyphEditorSketch {
     branch_continuation_probability: f64,
     #[param(slider, min = 0, max = 5)]
     max_decorations_per_glyph: usize,
+    #[param(slider, min = 0.0, max = 1.0)]
+    backtrack_probability: f64,
 
     // --- Rendering parameters ---
     use_bspline: bool,
@@ -84,6 +86,7 @@ impl Default for GlyphEditorSketch {
             max_decoration_branch_length: 2,
             branch_continuation_probability: 0.5,
             max_decorations_per_glyph: 3,
+            backtrack_probability: 0.0,
             use_bspline: false,
             tightness: 0.5,
             vertex_jitter: 0.1,
@@ -132,6 +135,7 @@ impl App for GlyphEditorSketch {
             max_decoration_branch_length: self.max_decoration_branch_length,
             branch_continuation_probability: self.branch_continuation_probability,
             max_decorations_per_glyph: self.max_decorations_per_glyph,
+            backtrack_probability: self.backtrack_probability,
         };
 
         // Handle actions.

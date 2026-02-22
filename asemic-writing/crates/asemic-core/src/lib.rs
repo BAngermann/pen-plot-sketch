@@ -89,6 +89,7 @@ mod integration_tests {
             max_path_length: 15,
             max_edge_visits: 2,
             max_vertex_visits: 3,
+            ..PathConstraints::default()
         };
         let dec_constraints = DecorationConstraints::default();
         let mut rng = ChaCha8Rng::seed_from_u64(42);

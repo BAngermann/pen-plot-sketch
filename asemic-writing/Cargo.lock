@@ -4887,6 +4887,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "word-composer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "asemic-core",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "serde",
+ "serde_json",
+ "vsvg",
+ "whiskers",
+]
+
+[[package]]
 name = "writeable"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

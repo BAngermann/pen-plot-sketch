@@ -10,6 +10,10 @@ pub struct PathConstraints {
     pub max_edge_visits: usize,
     /// How many times a single vertex may be traversed.
     pub max_vertex_visits: usize,
+    /// Probability [0.0, 1.0] that the walk may immediately reverse along the
+    /// edge it just came from. 0.0 = never backtrack, 1.0 = always allow.
+    #[serde(default)]
+    pub backtrack_probability: f64,
 }
 
 impl Default for PathConstraints {
@@ -19,6 +23,7 @@ impl Default for PathConstraints {
             max_path_length: 20,
             max_edge_visits: 1,
             max_vertex_visits: 2,
+            backtrack_probability: 0.0,
         }
     }
 }
@@ -113,13 +118,17 @@ fn walk(
         return None;
     }
 
+    // Decide whether backtracking is allowed for this step.
+    let allow_backtrack = constraints.backtrack_probability > 0.0
+        && rng.r#gen::<f64>() < constraints.backtrack_probability;
+
     // Collect valid next edges.
     let valid_edges: Vec<usize> = graph.vertex_edges[current]
         .iter()
         .copied()
         .filter(|&ei| {
-            // No immediate backtracking.
-            if Some(ei) == last_edge {
+            // No immediate backtracking (unless stochastically allowed).
+            if Some(ei) == last_edge && !allow_backtrack {
                 return false;
             }
             // Edge visit limit.
@@ -356,6 +365,7 @@ mod tests {
             max_path_length: 15,
             max_edge_visits: 2,
             max_vertex_visits: 3,
+            ..PathConstraints::default()
         };
         let mut rng = test_rng();
 
@@ -487,6 +497,7 @@ mod tests {
             max_path_length: 15,
             max_edge_visits: 2,
             max_vertex_visits: 3,
+            ..PathConstraints::default()
         };
         let mut rng = test_rng();
 
@@ -510,6 +521,7 @@ mod tests {
             max_path_length: 200,
             max_edge_visits: 1,
             max_vertex_visits: 1,
+            ..PathConstraints::default()
         };
         let mut rng = test_rng();
 

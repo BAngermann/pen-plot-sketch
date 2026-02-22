@@ -18,6 +18,8 @@ pub struct SamplingConstraints {
     pub max_decoration_branch_length: usize,
     pub branch_continuation_probability: f64,
     pub max_decorations_per_glyph: usize,
+    #[serde(default)]
+    pub backtrack_probability: f64,
 }
 
 impl Default for SamplingConstraints {
@@ -31,6 +33,7 @@ impl Default for SamplingConstraints {
             max_decoration_branch_length: 2,
             branch_continuation_probability: 0.5,
             max_decorations_per_glyph: 3,
+            backtrack_probability: 0.0,
         }
     }
 }
@@ -42,6 +45,7 @@ impl SamplingConstraints {
             max_path_length: self.max_path_length,
             max_edge_visits: self.max_edge_visits,
             max_vertex_visits: self.max_vertex_visits,
+            backtrack_probability: self.backtrack_probability,
         }
     }
 
