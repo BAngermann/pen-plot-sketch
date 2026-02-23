@@ -1,0 +1,12 @@
+{
+  "denominator": 1792,
+  "c_real": -0.12260000000000004,
+  "c_imaginary": 0.7449000000000001,
+  "draw_level_sets": false,
+  "only_closest_level_set": true,
+  "level_set_spacing": 10,
+  "level_set_refinement": 1,
+  "draw_internal_rays": false,
+  "adaptive_refinement": false,
+  "adaptive_threshold": 0.0025
+}
