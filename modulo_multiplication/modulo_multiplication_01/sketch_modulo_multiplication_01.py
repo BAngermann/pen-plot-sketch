@@ -71,7 +71,9 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
                 ox, oy = self.clip_box_offset_x, self.clip_box_offset_y
                 vsk.rect(ox - C * ar, oy - C, 2 * C * ar, 2 * C)
             else:
-                vsk.circle(0, 0, 2 * C)
+                ar = self.clip_aspect_ratio
+                ox, oy = self.clip_box_offset_x, self.clip_box_offset_y
+                vsk.ellipse(ox, oy, 2 * C * ar, 2 * C)
 
         if self.show_text:
             C = self.cutoff_r
@@ -146,7 +148,7 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         if abs(cross) < 1e-9 * R * R:
             C = self.cutoff_r
             clip = self._clip_to_box if self.square_clip else self._clip_to_disk
-            far = C * 2
+            far = self._far_extent(C, R)
             for px, py in [(x1, y1), (x2, y2)]:
                 seg = clip(px, py, px * far / R, py * far / R, C)
                 if seg:
@@ -213,41 +215,46 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
             vsk.polygon(run_x, run_y, close=False)
 
     def _clip_to_disk(self, x1, y1, x2, y2, C):
-        """Clip segment to disk |z| ≤ C, finding the exact boundary crossing."""
+        """Clip segment to ellipse ((x-ox)/ar)²+(y-oy)² ≤ C²."""
+        ar = self.clip_aspect_ratio
+        ox, oy = self.clip_box_offset_x, self.clip_box_offset_y
+        # Scale x so the ellipse becomes a circle of radius C.
+        u1, v1 = (x1 - ox) / ar, y1 - oy
+        u2, v2 = (x2 - ox) / ar, y2 - oy
         C2 = C * C
-        in1 = x1 * x1 + y1 * y1 <= C2
-        in2 = x2 * x2 + y2 * y2 <= C2
+        in1 = u1 * u1 + v1 * v1 <= C2
+        in2 = u2 * u2 + v2 * v2 <= C2
 
         if not in1 and not in2:
             return None
         if in1 and in2:
             return x1, y1, x2, y2
 
-        dx, dy = x2 - x1, y2 - y1
-        a = dx * dx + dy * dy
+        du, dv = u2 - u1, v2 - v1
+        a = du * du + dv * dv
         if a < 1e-15:
             return None
-        b = 2.0 * (x1 * dx + y1 * dy)
-        c = x1 * x1 + y1 * y1 - C2
+        b = 2.0 * (u1 * du + v1 * dv)
+        c = u1 * u1 + v1 * v1 - C2
         disc = b * b - 4 * a * c
         if disc < 0:
             return None
         sq = math.sqrt(disc)
 
-        if in1:          # p1 inside → clip p2 to exit point (larger root)
+        dx, dy = x2 - x1, y2 - y1
+        if in1:
             t = min(1.0, max(0.0, (-b + sq) / (2 * a)))
             return x1, y1, x1 + t * dx, y1 + t * dy
-        else:            # p2 inside → clip p1 to entry point (smaller root)
+        else:
             t = min(1.0, max(0.0, (-b - sq) / (2 * a)))
             return x1 + t * dx, y1 + t * dy, x2, y2
 
     def _far_extent(self, C, R):
         """Compute a ray endpoint guaranteed to lie outside the active clip region."""
-        if self.square_clip:
-            ar = self.clip_aspect_ratio
-            ox, oy = abs(self.clip_box_offset_x), abs(self.clip_box_offset_y)
-            return (C * ar + ox + C + oy + R) * 2
-        return C * 2
+        ar = self.clip_aspect_ratio
+        ox = abs(self.clip_box_offset_x)
+        oy = abs(self.clip_box_offset_y)
+        return (C * max(ar, 1.0) + ox + C + oy + R) * 2
 
     def _clip_to_box(self, x1, y1, x2, y2, C):
         """Clip segment to rectangle [ox-C·ar, ox+C·ar] × [oy-C, oy+C] using Liang-Barsky."""
