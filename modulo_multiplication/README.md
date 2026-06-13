@@ -16,7 +16,11 @@ Connects point `i` on a circle to point `(i × multiplier) mod n`, producing tim
 |-----------|---------|-------------|
 | `hyperbolic` | False | Draw lines as hyperbolic geodesics (circular arcs orthogonal to the boundary circle) instead of straight chords |
 | `draw_interior` | True | Draw the interior lines/arcs (inside the boundary circle) |
+| `interior_i_start` | 0 | First index `i` to include in interior drawing (inclusive) |
+| `interior_i_stop` | 0 | Last index `i` to include in interior drawing (exclusive); 0 = draw all up to `n` |
 | `draw_inverted` | False | Draw the image of each line/arc under inversion in the boundary circle. For chords this produces arcs through the origin; for hyperbolic arcs it produces the complementary arc on the same circle, which lies outside the boundary |
+| `exterior_i_start` | 0 | First index `i` to include in inverted/exterior drawing (inclusive) |
+| `exterior_i_stop` | 0 | Last index `i` to include in inverted/exterior drawing (exclusive); 0 = draw all up to `n` |
 
 ### Clipping (applies to inverted arcs)
 | Parameter | Default | Description |

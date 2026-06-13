@@ -10,7 +10,11 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
     show_circle = vsketch.Param(True)
     hyperbolic = vsketch.Param(False)
     draw_interior = vsketch.Param(True)
+    interior_i_start = vsketch.Param(0)
+    interior_i_stop = vsketch.Param(0)   # 0 = draw all (up to n)
     draw_inverted = vsketch.Param(False)
+    exterior_i_start = vsketch.Param(0)
+    exterior_i_stop = vsketch.Param(0)   # 0 = draw all (up to n)
     cutoff_r = vsketch.Param(4.5)
     square_clip = vsketch.Param(False)
     clip_aspect_ratio = vsketch.Param(1.0)
@@ -40,18 +44,24 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
             vsk.circle(0, 0, 2 * self.r)
 
         tpn = twopi / self.n
+        int_stop = self.interior_i_stop if self.interior_i_stop > 0 else self.n
+        ext_stop = self.exterior_i_stop if self.exterior_i_stop > 0 else self.n
         for i in range(0, self.n):
+            draw_int = self.draw_interior and (self.interior_i_start <= i < int_stop)
+            draw_ext = self.draw_inverted and (self.exterior_i_start <= i < ext_stop)
+            if not draw_int and not draw_ext:
+                continue
             x1 = -self.r * math.cos(i * tpn)
             y1 =  self.r * math.sin(i * tpn)
             j = (i * self.multiplier) % self.n
             x2 = -self.r * math.cos(j * tpn)
             y2 =  self.r * math.sin(j * tpn)
             if self.hyperbolic:
-                self._hyperbolic_line(vsk, x1, y1, x2, y2)
+                self._hyperbolic_line(vsk, x1, y1, x2, y2, draw_int, draw_ext)
             else:
-                if self.draw_interior:
+                if draw_int:
                     vsk.line(x1, y1, x2, y2)
-                if self.draw_inverted:
+                if draw_ext:
                     self._inverted_chord(vsk, x1, y1, x2, y2)
 
         if self.show_clip_boundary:
@@ -72,15 +82,15 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
             vsk.text(text=f'n={self.n}', x=-hw + box_x + self.text_offset_x, y=ty, size=sz, mode="transform", font="futural")
             vsk.text(text=f'x={self.multiplier}', x=hw + box_x - self.text_offset_x, y=ty, size=sz, mode="transform", font="futural", align="right")
 
-    def _hyperbolic_line(self, vsk, x1, y1, x2, y2):
+    def _hyperbolic_line(self, vsk, x1, y1, x2, y2, draw_int=True, draw_ext=True):
         R = self.r
         cross = x1 * y2 - x2 * y1
 
         if abs(cross) < 1e-9 * R * R:
             # Antipodal: geodesic is a diameter.
-            if self.draw_interior:
+            if draw_int:
                 vsk.line(x1, y1, x2, y2)
-            if self.draw_inverted:
+            if draw_ext:
                 # Inversion of a diameter = two outward radial rays from each boundary point.
                 # Extend each ray well past C so the clip function finds the real boundary
                 # (circle of radius C inscribes inside square [-C,C]², so a point exactly
@@ -112,10 +122,10 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         else:
             start_a, sweep = a2, 2 * math.pi - a2_rel
 
-        if self.draw_interior:
+        if draw_int:
             self._draw_arc(vsk, cx, cy, arc_r, start_a, sweep)
 
-        if self.draw_inverted:
+        if draw_ext:
             # The arc circle is orthogonal to the boundary circle, so inversion in
             # the boundary circle maps the arc circle to itself. The inverted arc is
             # therefore the complementary arc on the same circle.
@@ -164,22 +174,43 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         self._draw_arc_clipped(vsk, cx, cy, arc_r, start_a, sweep)
 
     def _draw_arc(self, vsk, cx, cy, arc_r, start_a, sweep, segments=360):
-        for i in range(segments):
-            ta = start_a + sweep * i / segments
-            tb = start_a + sweep * (i + 1) / segments
-            vsk.line(cx + arc_r * math.cos(ta), cy + arc_r * math.sin(ta),
-                     cx + arc_r * math.cos(tb), cy + arc_r * math.sin(tb))
+        angles = [start_a + sweep * t / segments for t in range(segments + 1)]
+        vsk.polygon([cx + arc_r * math.cos(a) for a in angles],
+                    [cy + arc_r * math.sin(a) for a in angles],
+                    close=False)
 
     def _draw_arc_clipped(self, vsk, cx, cy, arc_r, start_a, sweep, segments=360):
         clip = self._clip_to_box if self.square_clip else self._clip_to_disk
         C = self.cutoff_r
+        run_x, run_y = [], []
+
         for i in range(segments):
             ta = start_a + sweep * i / segments
             tb = start_a + sweep * (i + 1) / segments
-            seg = clip(cx + arc_r * math.cos(ta), cy + arc_r * math.sin(ta),
-                       cx + arc_r * math.cos(tb), cy + arc_r * math.sin(tb), C)
-            if seg:
-                vsk.line(*seg)
+            xa = cx + arc_r * math.cos(ta)
+            ya = cy + arc_r * math.sin(ta)
+            xb = cx + arc_r * math.cos(tb)
+            yb = cy + arc_r * math.sin(tb)
+            seg = clip(xa, ya, xb, yb, C)
+
+            if seg is None:
+                if len(run_x) >= 2:
+                    vsk.polygon(run_x, run_y, close=False)
+                run_x, run_y = [], []
+            else:
+                x1c, y1c, x2c, y2c = seg
+                # Detect a gap: clipped start doesn't continue the current run.
+                if run_x and (abs(x1c - run_x[-1]) > 1e-9 or abs(y1c - run_y[-1]) > 1e-9):
+                    if len(run_x) >= 2:
+                        vsk.polygon(run_x, run_y, close=False)
+                    run_x, run_y = [x1c], [y1c]
+                elif not run_x:
+                    run_x, run_y = [x1c], [y1c]
+                run_x.append(x2c)
+                run_y.append(y2c)
+
+        if len(run_x) >= 2:
+            vsk.polygon(run_x, run_y, close=False)
 
     def _clip_to_disk(self, x1, y1, x2, y2, C):
         """Clip segment to disk |z| ≤ C, finding the exact boundary crossing."""
@@ -240,7 +271,7 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         return x1 + t0 * dx, y1 + t0 * dy, x1 + t1 * dx, y1 + t1 * dy
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
-        vsk.vpype("linemerge linesimplify reloop linesort")
+        vsk.vpype("multipass")
 
 
 if __name__ == "__main__":
