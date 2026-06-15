@@ -28,6 +28,7 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
     text_offset_y = vsketch.Param(0.0)
     page_size = vsketch.Param("10cmx10cm")
     landscape = vsketch.Param(False)
+    multipass = vsketch.Param(True)
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size(self.page_size, landscape = self.landscape ,center=False)
@@ -278,7 +279,8 @@ class ModuloMultiplication01Sketch(vsketch.SketchClass):
         return x1 + t0 * dx, y1 + t0 * dy, x1 + t1 * dx, y1 + t1 * dy
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
-        vsk.vpype("multipass")
+        if self.multipass:
+            vsk.vpype("multipass")
 
 
 if __name__ == "__main__":

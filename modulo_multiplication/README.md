@@ -46,6 +46,7 @@ The two sketches approach that structure from different directions:
 | `landscape` | False | Rotate page to landscape orientation |
 | `offset_x` | 0.0 | Shift the entire drawing horizontally from the page centre (cm) |
 | `offset_y` | 0.0 | Shift the entire drawing vertically from the page centre (cm) |
+| `multipass` | True | Run vpype `multipass` in `finalize` to double every stroke (useful for pen plotters); disable to export single-pass lines |
 
 ### Labels
 | Parameter | Default | Description |
