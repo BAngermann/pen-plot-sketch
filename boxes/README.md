@@ -13,10 +13,29 @@ Run with `vsk run` from this directory (the sketch adds the repo root to
    along a Poisson-biased position (cuts favour offsets near the edges, giving a
    mix of large and small boxes). Splitting stops once the largest remaining box
    falls below `area_threshold`.
-2. **Fill.** Each surviving box becomes a polygon and is filled via `penfill`,
-   either with one fixed fill or a freshly sampled one per box.
+2. **Fill.** Each surviving box becomes a polygon and is filled via `penfill`.
+   In deterministic mode every box uses one fixed spec. In random/freeze mode
+   each box gets a fill *type* (see below) with the remaining parameters sampled.
 3. **Outline + colour.** An optional black outline is drawn on top, and a vpype
    `color` command assigns the per-layer palette for the GUI/preview.
+
+### Random / freeze mode
+
+When `random_fill` is on, fill *types* are assigned hierarchically over the split
+tree so the result is a mix of coherent patches and noise:
+
+- The first `freeze_after_splits` cuts are a warm-up — boxes there are not frozen.
+- After that, each newly created box is **frozen** with probability `freeze_prob`
+  to a random **fill type** — `solid`, `hatch`, or a single glyph — and *all its
+  descendants inherit that type*.
+- Within a frozen subtree the type is fixed but the other parameters still vary
+  per box (hatch direction, spacing, square/hex/halton grid, glyph angle, size…).
+- Boxes never caught by a freeze get an independent random type.
+
+Because freezing is inherited, it is "sticky": `freeze_prob` mainly controls
+*where* in the tree coherence begins — higher → freezes earlier → larger, fewer
+patches; lower → freezes deeper → smaller patches and more independently-random
+boxes.
 
 ## Parameters
 
@@ -31,11 +50,17 @@ Run with `vsk run` from this directory (the sketch adds the repo root to
 
 ### Fill
 - `fill_pattern` — `solid` (vsketch native fill), `hatch`, or `glyph_grid`.
-- `random_fill` — when on, sample a fresh fill per box; when off, use one fixed
-  spec built from the deterministic knobs below.
+  Used only in deterministic mode (ignored when `random_fill` is on).
+- `random_fill` — when on, use random/freeze mode; when off, use one fixed spec
+  built from the deterministic knobs below.
 - `fill_seed` — seed for fill sampling / glyph jitter (0 = varies each run).
-- `fill_spacing` — grid / hatch spacing in box units (pinned in both modes).
+- `fill_spacing` — base grid / hatch spacing in box units.
 - `draw_outline` — draw a black box border on top of the fill.
+
+### Random / freeze knobs (used when `random_fill` is on)
+- `freeze_after_splits` — number of warm-up cuts before freezing can begin.
+- `freeze_prob` — probability each new box freezes to a random fill type.
+- `spacing_var` — spacing varies ± this fraction of `fill_spacing` per box.
 
 ### Deterministic-mode knobs (ignored when `random_fill` is on)
 - `grid_type` — `square`, `hex`, or `halton` (for `glyph_grid`).
