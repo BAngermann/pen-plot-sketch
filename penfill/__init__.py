@@ -37,11 +37,13 @@ from .geometry import (Geometry, Primitive, Pt, clip_polyline, prep_poly,
 from .glyphs import GLYPH_TYPES, glyph
 from .grids import GRID_TYPES, GRIDS
 from .patterns import PATTERN_NAMES, PATTERNS
+from .pens import Pen, load_pen_config, load_pens
 from .rng import RandomLike, VskRandom
 
 __all__ = [
     "FillSpec", "fill_polygon", "sample_fill", "draw_geometry",
     "to_polygon", "rect_polygon", "VskRandom", "RandomLike",
+    "Pen", "load_pens", "load_pen_config",
     "PATTERN_NAMES", "GRID_TYPES", "GLYPH_TYPES",
     "Geometry", "Primitive", "Pt",
 ]

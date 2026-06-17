@@ -101,6 +101,7 @@ Concave / holed regions work via `to_polygon(shell, holes=[...])`.
 - `glyphs.py` — glyph generators returning local oriented polylines
   (`GLYPH_TYPES`).
 - `patterns.py` — the `(render, sample)` registry (`PATTERNS`, `PATTERN_NAMES`).
+- `pens.py` — load vpype pen-config TOML (`load_pens`, `load_pen_config`, `Pen`).
 - `rng.py` — `RandomLike` protocol and the `VskRandom` adapter.
 - `__init__.py` — public API (`FillSpec`, `fill_polygon`, `sample_fill`,
   `draw_geometry`, …).
@@ -111,6 +112,16 @@ Add a pattern by writing `render(poly, params, layer) -> Geometry` and
 `sample(rng, overrides) -> params`, then registering the pair in
 `PATTERNS` (`patterns.py`). It immediately appears in `PATTERN_NAMES` and any UI
 driven by it.
+
+## Pen configurations
+
+`load_pens(directory)` reads every vpype pen-config `*.toml` in a directory and
+returns an ordered `{pen name: "#rrggbb"}` map — handy for populating a UI of
+colour choices and resolving a chosen name to a hex value. `load_pen_config(path)`
+returns the full `{config: [Pen, …]}` (name, color, width). These TOML files are
+produced by [`tools/drawingbot_to_vpype.py`](../tools/) from DrawingBot presets
+and live in [`pens/`](../pens/); they are also usable directly by vpype's `pens`
+command.
 
 ## Roadmap
 

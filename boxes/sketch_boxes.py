@@ -6,10 +6,21 @@ import sys
 import vsketch
 
 # Make the repo-root `penfill` package importable when run via `vsk run`.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+_REPO = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO))
 from penfill import (FillSpec, GLYPH_TYPES, GRID_TYPES, PATTERN_NAMES,
-                     VskRandom, draw_geometry, fill_polygon, rect_polygon,
-                     sample_fill)
+                     VskRandom, draw_geometry, fill_polygon, load_pens,
+                     rect_polygon, sample_fill)
+
+# Pen colours converted from DrawingBot presets (see tools/drawingbot_to_vpype.py).
+PENS = load_pens(_REPO / "pens")            # {pen name: "#rrggbb"}
+PEN_NAMES = list(PENS)
+COLOR_CHOICES = ["none"] + PEN_NAMES
+
+
+def _default_color(i: int) -> str:
+    """Default the first few colour slots to the first pens, the rest to none."""
+    return PEN_NAMES[i - 1] if i - 1 < len(PEN_NAMES) else "none"
 
 
 class BoxesSketch(vsketch.SketchClass):
@@ -27,7 +38,17 @@ class BoxesSketch(vsketch.SketchClass):
     random_fill = vsketch.Param(True)            # random/freeze mode vs one fixed spec
     fill_seed = vsketch.Param(0)
     fill_spacing = vsketch.Param(1.5, min_value=0.1, decimals=2)  # box units
+    # Colours: pick up to 6 pens for the fill palette; the first "none" ends the
+    # palette (so set color_4 = "none" to use only 3 colours, etc.).  Fills are
+    # assigned a random palette colour per box.
+    color_1 = vsketch.Param(_default_color(1), choices=COLOR_CHOICES)
+    color_2 = vsketch.Param(_default_color(2), choices=COLOR_CHOICES)
+    color_3 = vsketch.Param(_default_color(3), choices=COLOR_CHOICES)
+    color_4 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_5 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
     draw_outline = vsketch.Param(True)
+    outline_color = vsketch.Param("none", choices=COLOR_CHOICES)  # "none" -> black
     # Random/freeze mode: after the first `freeze_after_splits` cuts, each new box
     # is frozen (prob `freeze_prob`) to a random fill TYPE — solid, hatch, or one
     # glyph — that all its descendants inherit.  Unfrozen boxes get an independent
@@ -144,6 +165,16 @@ class BoxesSketch(vsketch.SketchClass):
                            spacing=spacing, glyph=glyph,
                            halton_bases=(self.halton_base_x, self.halton_base_y))
 
+    def _palette(self):
+        """Selected fill colours (hex), truncated at the first 'none' slot."""
+        palette = []
+        for c in (self.color_1, self.color_2, self.color_3,
+                  self.color_4, self.color_5, self.color_6):
+            if c == "none":
+                break
+            palette.append(PENS.get(c, "black"))
+        return palette
+
     def _deterministic_spec(self, layer):
         bases = (self.halton_base_x, self.halton_base_y)
         if self.fill_pattern == "solid":
@@ -174,6 +205,11 @@ class BoxesSketch(vsketch.SketchClass):
 
         fill_types = self._fill_types()
 
+        # Fills use palette layers 1..K; the outline gets the next layer up.
+        palette = self._palette()
+        n_colors = max(1, len(palette))
+        outline_layer = n_colors + 1
+
         # Reseed so fill sampling is reproducible from fill_seed (0 = vary each run).
         if self.fill_seed:
             vsk.randomSeed(self.fill_seed)
@@ -181,7 +217,7 @@ class BoxesSketch(vsketch.SketchClass):
         for bx, by, bw, bh, ftype in final_boxes:
             if vsk.random(1) <= self.drop_probability:
                 continue
-            layer = int(vsk.random(2, 5))
+            layer = 1 + int(vsk.random(n_colors))
             poly = rect_polygon(ox + bx, oy + by, bw, bh)
             if self.random_fill:
                 # Unfrozen boxes get an independent random type.
@@ -192,11 +228,16 @@ class BoxesSketch(vsketch.SketchClass):
                 spec = self._deterministic_spec(layer)
             draw_geometry(vsk, fill_polygon(poly, spec))
             if self.draw_outline:
-                vsk.stroke(6)
+                vsk.stroke(outline_layer)
                 vsk.rect(ox + bx, oy + by, bw, bh)
 
-        vsk.vpype("color --layer 6 black color --layer 2 #1c0f1f "
-                  "color --layer 3 #341c3d color --layer 4 #be98c0")
+        parts = [f"color --layer {i + 1} {hexc}" for i, hexc in enumerate(palette)]
+        if self.draw_outline:
+            outline_hex = "black" if self.outline_color == "none" \
+                else PENS.get(self.outline_color, "black")
+            parts.append(f"color --layer {outline_layer} {outline_hex}")
+        if parts:
+            vsk.vpype(" ".join(parts))
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("linemerge linesimplify reloop linesort")

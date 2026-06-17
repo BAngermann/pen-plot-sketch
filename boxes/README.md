@@ -55,7 +55,18 @@ boxes.
   built from the deterministic knobs below.
 - `fill_seed` — seed for fill sampling / glyph jitter (0 = varies each run).
 - `fill_spacing` — base grid / hatch spacing in box units.
-- `draw_outline` — draw a black box border on top of the fill.
+- `draw_outline` — draw a box border on top of the fill.
+
+### Colours
+- `color_1` … `color_6` — the fill palette, chosen from the pens loaded out of
+  [`../pens/`](../pens/). The first slot set to `none` ends the palette, so to
+  use fewer colours just set the next one to `none` (e.g. `color_4 = none` → a
+  3-colour palette). Each box is assigned a random palette colour.
+- `outline_color` — pen for the box outline (`none` → black).
+
+Pens come from vpype pen-config TOML files in `../pens/`, converted from
+DrawingBot presets with [`tools/drawingbot_to_vpype.py`](../tools/). Add more
+presets there and they appear in the dropdowns.
 
 ### Random / freeze knobs (used when `random_fill` is on)
 - `freeze_after_splits` — number of warm-up cuts before freezing can begin.
@@ -74,11 +85,9 @@ boxes.
 
 ## Layers
 
-Fills land on layers 2–4 (random per box); the outline is drawn on layer 6 so it
-sits on top. The palette is set in `draw()` via vpype `color --layer …`.
-
-> Note: the layer-6 outline is a deliberate quick-and-dirty way to keep the
-> outline on top. More colours and reading pen settings from config are planned.
+Fills land on layers `1..K`, where `K` is the number of selected palette colours;
+the outline is drawn on layer `K+1` so it sits on top. Colours are applied in
+`draw()` via vpype `color --layer …` from the selected pens.
 
 ## Saved configs
 
