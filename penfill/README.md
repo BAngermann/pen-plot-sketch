@@ -102,6 +102,8 @@ Concave / holed regions work via `to_polygon(shell, holes=[...])`.
   (`GLYPH_TYPES`).
 - `patterns.py` — the `(render, sample)` registry (`PATTERNS`, `PATTERN_NAMES`).
 - `pens.py` — load vpype pen-config TOML (`load_pens`, `load_pen_config`, `Pen`).
+- `swatches.py` — `install_swatches` adds colour swatches to vsketch's GUI
+  dropdowns (a contained monkey-patch of `vsketch_cli`; GUI-only, no-ops headless).
 - `rng.py` — `RandomLike` protocol and the `VskRandom` adapter.
 - `__init__.py` — public API (`FillSpec`, `fill_polygon`, `sample_fill`,
   `draw_geometry`, …).
@@ -122,6 +124,9 @@ returns the full `{config: [Pen, …]}` (name, color, width). These TOML files a
 produced by [`tools/drawingbot_to_vpype.py`](../tools/) from DrawingBot presets
 and live in [`pens/`](../pens/); they are also usable directly by vpype's `pens`
 command.
+
+Call `install_swatches(name_to_color)` once at sketch import to render a colour
+swatch beside each pen name in the GUI's choice dropdowns.
 
 ## Roadmap
 

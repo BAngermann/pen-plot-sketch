@@ -66,7 +66,8 @@ boxes.
 
 Pens come from vpype pen-config TOML files in `../pens/`, converted from
 DrawingBot presets with [`tools/drawingbot_to_vpype.py`](../tools/). Add more
-presets there and they appear in the dropdowns.
+presets there and they appear in the dropdowns — each with a colour swatch next
+to its name in the GUI.
 
 ### Random / freeze knobs (used when `random_fill` is on)
 - `freeze_after_splits` — number of warm-up cuts before freezing can begin.

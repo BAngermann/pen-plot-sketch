@@ -9,13 +9,16 @@ import vsketch
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO))
 from penfill import (FillSpec, GLYPH_TYPES, GRID_TYPES, PATTERN_NAMES,
-                     VskRandom, draw_geometry, fill_polygon, load_pens,
-                     rect_polygon, sample_fill)
+                     VskRandom, draw_geometry, fill_polygon, install_swatches,
+                     load_pens, rect_polygon, sample_fill)
 
 # Pen colours converted from DrawingBot presets (see tools/drawingbot_to_vpype.py).
 PENS = load_pens(_REPO / "pens")            # {pen name: "#rrggbb"}
 PEN_NAMES = list(PENS)
 COLOR_CHOICES = ["none"] + PEN_NAMES
+
+# Show colour swatches next to pen names in the GUI dropdowns (GUI-only no-op).
+install_swatches(PENS)
 
 
 def _default_color(i: int) -> str:
