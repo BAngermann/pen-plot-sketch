@@ -66,8 +66,26 @@ draw), while `Move` is a single character.
 | `Angle__std_deviation` | Standard deviation of Gaussian noise added to every turn (degrees). `0` = exact. |
 | `Length_std_deviation` | Standard deviation of Gaussian noise added to every segment/move length. `0` = exact. |
 | `instances` | Number of overlaid copies of the figure (combine with the std-deviation params to draw a "bundle" of slightly different growths). |
-| `Align_instances` | When on (and `instances > 1`), each copy is fitted onto the first by the rigid transform (rotation + translation) that minimizes the mean squared distance between corresponding endpoints — a Kabsch/Procrustes fit — rather than pinning them all to a shared start point. This clusters the bundle around a common shape. |
-| `Fix_reference` | When on, instance 0 is drawn at its exact nominal (un-jittered) values, so it acts as a clean reference for `Align_instances`. |
+| `AlignStart` / `AlignEnd` | Vertex-index range each copy is aligned on. With `instances > 1`, every copy is fitted onto the first by the rigid transform (rotation + translation) that minimizes the mean squared distance between corresponding endpoints — a Kabsch/Procrustes fit — computed over the endpoints in `[AlignStart, AlignEnd)`. See [Alignment range](#alignment-range). |
+| `Fix_reference` | When on, instance 0 is drawn at its exact nominal (un-jittered) values, so it acts as a clean alignment reference. |
+
+#### Alignment range
+
+The alignment is a single control with two extremes, selected by the vertex
+index range:
+
+- **First vertex only → pin at the shared start point.** This is the default
+  (`AlignStart = AlignEnd = 0`) and what any empty range falls back to. Since
+  every instance starts at the same origin, aligning on just the first vertex is
+  a no-op, so the bundle fans out from the start.
+- **All vertices → best whole-shape fit.** Clusters the bundle around a common
+  shape.
+- **Any sub-range in between** aligns the copies on that stretch of the path
+  (e.g. align the tips, or a middle section) and lets the rest drift.
+
+Index handling: `AlignStart` is clamped to `≥ 0`; an `AlignEnd` past the last
+vertex **or** negative means "all vertices"; an empty range (start ≥ end) falls
+back to the first vertex only.
 
 ### Placement
 
@@ -117,6 +135,8 @@ the same spot. Per layer:
   `TransformScale` to control how quickly they shrink.
 - Small `Angle__std_deviation` / `Length_std_deviation` values (a few percent)
   with several `instances` give natural-looking variation.
-- For a tight, "sketchy" bundle, enable `Align_instances` (and usually
-  `Fix_reference`) so the jittered copies overlap around a common form instead
-  of fanning out from the start point.
+- For a tight, "sketchy" bundle, set `AlignEnd` high (e.g. larger than the
+  vertex count, which means "all") — usually with `Fix_reference` — so the
+  jittered copies overlap around a common form instead of fanning out from the
+  start point. Narrow the `AlignStart`/`AlignEnd` range to pin only part of the
+  path.

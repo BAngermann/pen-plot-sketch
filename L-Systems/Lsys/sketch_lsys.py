@@ -13,7 +13,8 @@ class LsysSketch(vsketch.SketchClass):
     Angle__std_deviation = vsketch.Param(0.0,decimals = 3)
     Length_std_deviation=  vsketch.Param(0.0,decimals = 3)
     instances = vsketch.Param(1)
-    Align_instances = vsketch.Param(False)
+    AlignStart = vsketch.Param(0)
+    AlignEnd = vsketch.Param(0)
     Fix_reference = vsketch.Param(False)
     iterations = vsketch.Param(1)
     Scale = vsketch.Param(0.2, decimals = 3)
@@ -55,14 +56,23 @@ class LsysSketch(vsketch.SketchClass):
             for i in range(self.instances)
         ]
 
-        if self.Align_instances and len(instances) > 1:
-            # Align each instance onto the first by the rigid transform
-            # (rotation + translation) that minimises the mean squared distance
-            # between corresponding endpoints, rather than pinning them all to a
-            # shared starting point.
+        # Report the vertex count so the user can pick an AlignStart/AlignEnd range.
+        n_vertices = len(self._endpoints(instances[0])) if instances else 0
+        print(f"vertices: {n_vertices}")
+
+        if len(instances) > 1:
+            # Align each instance onto the first (instance 0) by the rigid
+            # transform (rotation + translation) that minimises the mean squared
+            # distance between corresponding endpoints, over the vertex-index
+            # range [AlignStart:AlignEnd]. The two extremes:
+            #   - first vertex only -> pins instances at their shared start point
+            #     (default, and what an empty range falls back to)
+            #   - all vertices      -> best whole-shape fit of the bundle
             reference = self._endpoints(instances[0])
+            start, end = self._align_range(len(reference))
             for i in range(1, len(instances)):
-                R, t = self._kabsch(self._endpoints(instances[i]), reference)
+                pts = self._endpoints(instances[i])
+                R, t = self._kabsch(pts[start:end], reference[start:end])
                 instances[i] = self._transform(instances[i], R, t)
 
         # Place the whole drawing: centre its bounding box on the page, rotate
@@ -132,6 +142,19 @@ class LsysSketch(vsketch.SketchClass):
         theta = np.radians(degrees)
         c, s = np.cos(theta), np.sin(theta)
         return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    def _align_range(self, n):
+        """Resolve (AlignStart, AlignEnd) into a half-open vertex slice [start,
+        end) over `n` endpoints. start is clamped to >= 0; an end past the last
+        vertex or negative means "all vertices"; an empty range falls back to
+        the first vertex only (align at the shared start point)."""
+        start = max(int(self.AlignStart), 0)
+        end = int(self.AlignEnd)
+        if end < 0 or end > n:
+            end = n
+        if start >= end:
+            start, end = 0, 1
+        return start, end
 
     @staticmethod
     def _endpoints(segments):
