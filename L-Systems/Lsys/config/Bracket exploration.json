@@ -1,0 +1,1 @@
+{"Axiom": "F+F+F+F", "Pred1": "F", "Suc1": "f-F+f+[F]-[f]", "Pred2": "f", "Suc2": "[F-f+F+[f]-[F]", "Draw": "F", "Move": "f", "TurnAngle": 75, "iterations": 5, "Scale": 0.07, "TransformScale": 0.25, "__seed__": 0}

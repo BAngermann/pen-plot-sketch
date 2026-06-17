@@ -1,0 +1,1 @@
+{"Axiom": "L", "Pred1": "L", "Suc1": "L+R++R-L--LL-R+", "Pred2": "R", "Suc2": "-L+RR++R+L--L-R", "Draw": "LR", "Move": "", "TurnAngle": 60, "Angle__std_deviation": 0.18000000000000005, "Length_std_deviation": 0.01, "instances": 32, "Align_instances": false, "Fix_reference": true, "iterations": 3, "Scale": 0.7, "TransformScale": 0.85, "__seed__": 0}
