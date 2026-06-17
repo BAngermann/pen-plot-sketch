@@ -1,5 +1,21 @@
+import pathlib
+import sys
+
 import vsketch
 import numpy as np
+
+# Make the repo-root `penfill` package importable when run via `vsk run`.
+_REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO))
+from penfill import install_swatches, load_pens
+
+# Pen colours converted from DrawingBot presets (see tools/drawingbot_to_vpype.py).
+PENS = load_pens(_REPO / "pens")            # {pen name: "#rrggbb"}
+COLOR_CHOICES = ["none"] + list(PENS)
+
+# Show colour swatches next to pen names in the GUI dropdowns (GUI-only no-op).
+install_swatches(PENS)
+
 
 class LsysSketch(vsketch.SketchClass):
     Axiom = vsketch.Param("F")
@@ -22,6 +38,16 @@ class LsysSketch(vsketch.SketchClass):
     GlobalRotation = vsketch.Param(0.0, decimals = 2)
     GlobalTranslateX = vsketch.Param(0.0, decimals = 2)
     GlobalTranslateY = vsketch.Param(0.0, decimals = 2)
+
+    # Up to 7 pen colours, cycled across the instance layers. The first "none"
+    # ends the palette; if none are selected, layers fall back to faint black.
+    color_1 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_2 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_3 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_4 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_5 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_7 = vsketch.Param("none", choices=COLOR_CHOICES)
 
     # A4 portrait page dimensions in cm, used to centre the drawing.
     PAGE_W_CM = 21.0
@@ -90,14 +116,17 @@ class LsysSketch(vsketch.SketchClass):
         # layer (--no-flip preserves segment direction). Keeping instances on
         # separate layers/passes lets the ink dry instead of piling overlapping
         # strokes in the same spot.
+        palette = self._palette()
         for i, segments in enumerate(instances):
             layer = i + 1
             vsk.stroke(layer)
             for (x0, y0), (x1, y1) in segments:
                 vsk.line(x0, y0, x1, y1)
             vsk.vpype(f"linemerge --no-flip --layer {layer}")
-            # Black at 30% opacity (alpha 0x4D) so overlapping passes read faint.
-            vsk.vpype(f'color --layer {layer} "#0000004d"')
+            # Cycle the selected pens across layers; with no pens selected, fall
+            # back to black at 30% opacity (alpha 0x4D) so overlaps read faint.
+            color = palette[i % len(palette)] if palette else "#0000004d"
+            vsk.vpype(f'color --layer {layer} "{color}"')
 
     def _generate_segments(self, vsk: vsketch.Vsketch, state, jitter=True):
         """Walk the turtle over `state`, returning a list of ((x0,y0),(x1,y1))
@@ -142,6 +171,16 @@ class LsysSketch(vsketch.SketchClass):
         theta = np.radians(degrees)
         c, s = np.cos(theta), np.sin(theta)
         return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    def _palette(self):
+        """Selected pen colours (hex), truncated at the first 'none' slot."""
+        palette = []
+        for c in (self.color_1, self.color_2, self.color_3, self.color_4,
+                  self.color_5, self.color_6, self.color_7):
+            if c == "none":
+                break
+            palette.append(PENS.get(c, "black"))
+        return palette
 
     def _align_range(self, n):
         """Resolve (AlignStart, AlignEnd) into a half-open vertex slice [start,

@@ -106,8 +106,17 @@ the same spot. Per layer:
 
 - `linemerge --no-flip` is run scoped to that layer (`--layer N`), so each
   instance is merged only within itself and segment direction is preserved.
-- the layer colour is set to black at 30% opacity (`#0000004d`), so overlapping
-  passes read faint.
+- the layer colour is assigned (see below).
+
+### Pen colours
+
+`color_1`–`color_7` pick up to seven pens (the same DrawingBot-derived palette
+as the boxes sketch, with colour swatches shown in the GUI dropdowns). The first
+slot set to `none` ends the palette. Selected pens are **cycled across the
+instance layers** — instance *i* uses palette entry `i mod len(palette)`.
+
+If no colours are selected (all `none`), layers fall back to black at 30%
+opacity (`#0000004d`) so overlapping passes read faint.
 
 ## Preset library
 
