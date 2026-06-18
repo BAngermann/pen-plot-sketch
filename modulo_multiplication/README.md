@@ -63,6 +63,8 @@ The two sketches approach that structure from different directions:
 
 Draws a grid of circles: rows correspond to values of `n`, columns to values of `multiplier`. Each cell shows the full multiplication table for that `(n, multiplier)` pair, making symmetries and duplicates immediately visible across the grid.
 
+For each row the sketch also prints, to the console, how many of that row's multipliers produce identical wiring diagrams (`redundant pairs`) — a quick way to gauge how much of a multiplier range is duplicate before committing to a plot.
+
 ### Grid
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -72,6 +74,16 @@ Draws a grid of circles: rows correspond to values of `n`, columns to values of 
 | `multiplier_min` | 0 | First multiplier column to draw (inclusive) |
 | `multiplier_max` | −1 | Last multiplier column to draw (inclusive); −1 = use `n` for each row, i.e. show all multipliers 0 … n |
 
+### Multiplier window shift
+By default every row draws the same multiplier range. These parameters slide that window as `n` increases, so each row can show a different band of multipliers (e.g. tracking `multiplier ≈ n/2`).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `multiplier_min_step` | 0 | Amount added to `multiplier_min` per increment of `n` (0 = off) |
+| `multiplier_max_step` | 0 | Amount added to `multiplier_max` per increment of `n` (0 = off) |
+| `multiplier_step_parity` | "all" | Apply the step on every row (`all`) or only on rows whose `n` is `even` / `odd` |
+| `align_by_multiplier` | False | Shift each row right so columns line up by multiplier value (a staircase gap opens on the left) instead of every row starting at the page edge |
+
 ### Layout
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -79,11 +91,22 @@ Draws a grid of circles: rows correspond to values of `n`, columns to values of 
 | `page_margin_y` | 1.5 | Vertical margin from the page edge to the grid (cm) |
 | `plot_margin_x` | 0.7 | Horizontal gap between circles (cm) |
 | `plot_margin_y` | 0.7 | Vertical gap between circles (cm) |
+| `hex_grid` | False | Pack rows in a hexagonal (offset) arrangement: odd rows are shifted half a column and row pitch drops to `√3·r`, so with zero plot margins neighbouring circles become tangent |
+| `hex_shift_right` | True | Shift the offset rows right (False = left) |
+
+### Hex-gap fill
+When the hex grid packs circles tangent (zero plot margins), the curvilinear-triangle gaps between each triple of mutually tangent circles can be filled with concentric arcs drawn around the three circle centres. Only active when `hex_grid` is on.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `fill_hex_gaps` | False | Fill the triangular gaps between tangent circles with concentric arcs |
+| `gap_arc_step` | 0.03 | Radius increment between successive arcs (cm) |
+| `fill_boundary` | True | Also arc the exposed (boundary) sectors of edge circles, so the grid outline matches the weight of the filled interior |
 
 ### Labels
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `show_text` | True | Draw row labels (`n=…`) and column headers (multiplier values) |
+| `show_text` | True | Draw row labels (`n=…`) and column headers (multiplier values). Column headers are suppressed for the hex grid or once a multiplier-window shift is active, since columns no longer map to a single multiplier |
 | `text_scale` | 0.2 | Font size of the labels (cm) |
 
 ### Page
