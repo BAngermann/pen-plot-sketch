@@ -45,6 +45,8 @@ boxes.
 - `split_lambda` — Poisson rate for cut placement (higher → cuts closer to an
   edge → more size contrast).
 - `scale` — cm per box unit (e.g. `0.2` → a 90-unit box is 18 cm).
+- `pen_width` — pen width in mm (default `0.3`). Sets the spacing reference for
+  solid/hatch/glyph fills and the line width used in the GUI preview.
 - `drop_probability` — chance each box is left empty.
 - `split_seed` — seed for the split (0 = varies each run).
 

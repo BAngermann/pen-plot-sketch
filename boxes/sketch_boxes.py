@@ -32,6 +32,7 @@ class BoxesSketch(vsketch.SketchClass):
     area_threshold = vsketch.Param(15, min_value=1)
     split_lambda = vsketch.Param(3.0, min_value=0.5)
     scale = vsketch.Param(0.2, min_value=0.1)
+    pen_width = vsketch.Param(0.3, min_value=0.01, decimals=2, unit="mm")
     drop_probability = vsketch.Param(0.0, min_value=0, decimals=3)
     split_seed = vsketch.Param(0)
 
@@ -195,6 +196,7 @@ class BoxesSketch(vsketch.SketchClass):
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size("a4", landscape=False)
+        vsk.penWidth(self.pen_width)  # Param unit="mm" -> value already in px
         vsk.scale("cm")
         vsk.scale(self.scale)
         if self.split_seed:
