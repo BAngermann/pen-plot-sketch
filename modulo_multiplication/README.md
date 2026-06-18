@@ -122,7 +122,7 @@ When the hex grid packs circles tangent (zero plot margins), the curvilinear-tri
 
 ## `modulo_multiplication_03` — Voronoi diagram of chord intersections
 
-Computes every intersection point of the `n` chords, builds a Voronoi diagram seeded at those points, and draws the bounded cell edges. Each cell is labelled by how many chords pass through its seed point. Optionally fills cells with hatching patterns and overlays the original chords.
+Computes every intersection point of the `n` chords, builds a Voronoi diagram seeded at those points, and draws the bounded cell edges. Each cell is labelled by how many chords pass through its seed point. Optionally fills cells using the shared [`penfill`](../../penfill/) library — solid, hatch, or glyph-grid patterns — and overlays the original chords.
 
 Intersection coordinates are computed with 25-digit precision (via `mpmath`) to avoid catastrophic cancellation in nearly-parallel chord pairs, which otherwise breaks symmetry in symmetric diagrams.
 
@@ -144,27 +144,50 @@ Intersection coordinates are computed with 25-digit precision (via `mpmath`) to 
 | `chords_on_top` | True | Draw chord overlay above the Voronoi (False = below) |
 
 ### Fill
+Fills are produced by the shared [`penfill`](../../penfill/) library. Cells are grouped by chord count (or neighbour count); each distinct count gets its own fill style and palette colour.
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `fill_cells` | False | Fill Voronoi cells with hatching glyphs |
-| `fill_by_neighbors` | False | Assign fill style by number of Voronoi neighbours instead of chord count |
-| `fill_seed` | 42 | Random seed for per-cell style selection |
+| `fill_cells` | False | Fill Voronoi cells |
+| `fill_by_neighbors` | False | Group cells by number of Voronoi neighbours instead of chord count |
+| `fill_pattern` | "glyph_grid" | penfill pattern: `solid`, `hatch`, or `glyph_grid` |
+| `random_style` | True | Sample a random style per count from `fill_seed`; False = use the deterministic knobs below |
+| `fill_seed` | 42 | Seed for per-count style sampling |
 | `grid_global_origin` | True | All cells share one grid origin; False = each cell uses its own centroid |
-| `grid_spacing` | 0.1 | Glyph grid spacing (cm) |
-| `glyph_scale` | 0.03 | Glyph half-size (cm); also used as cell-boundary padding to include partial edge glyphs |
-| `chevron_beta_a/b` | 1.0 | Beta-distribution shape parameters controlling chevron opening angle |
-| `wave_periods` | 1.0 | Periods per cell for sine/sawtooth/triangle-wave glyphs |
-| `wave_amplitude` | 0.06 | Amplitude of wave glyphs (cm) |
+| `fill_spacing` | 0.1 | Grid / hatch spacing (cm) |
+| `size_ratio` | 0.3 | Glyph size as a fraction of `fill_spacing` (deterministic glyph_grid only) |
+
+Deterministic knobs (used only when `random_style` is off):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `grid_type` | "square" | Glyph grid lattice: `square`, `hex`, or `halton` |
+| `glyph_type` | "dash" | Glyph drawn at each grid point (`dash`, `plus`, `circle`, `chevron`, `sine`, `sawtooth`, `triangle_wave`) |
+| `grid_angle` | 0.0 | Rotation of the glyph grid (degrees) |
+| `glyph_angle` | 0.0 | Rotation of each glyph (degrees) |
+| `halton_base_x/y` | 2 / 3 | Halton bases (used when `grid_type` = `halton`); distinct small primes |
+| `hatch_angle` | 45.0 | Hatch line angle (degrees) |
+| `hatch_cross` | False | Add a second, perpendicular set of hatch lines |
+
+### Colours
+Up to six pen colours form the fill palette; pen names are loaded from the repo-root [`pens/`](../../pens/) configs and shown as swatches in the GUI dropdowns. Each distinct chord-count group is assigned a palette colour in turn (cycling if there are more counts than colours).
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `color_1 … color_6` | first pens / `none` | Fill palette; the first `none` slot ends the palette (so set `color_4 = none` to use three colours) |
+| `outline_color` | "none" | Colour of the Voronoi outline (`none` = black) |
+| `chord_color` | "none" | Colour of the chord overlay (`none` = black) |
 
 ### Page & layout
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `page_size` | "25cmx25cm" | Page size |
 | `landscape` | False | Landscape orientation |
+| `pen_width` | 0.3 | Pen width (mm); sets vsketch's stroke width |
 | `offset_x/y` | 0.0 | Shift the diagram from page centre (cm) |
 
 ### Layer structure
-The sketch assigns one layer per unique chord-count value. Fill layers are numbered starting from 2 (one per distinct chord count); the Voronoi outline is always the top layer. When `show_chords` is enabled, chord lines occupy an additional layer either below the fills or above the outline.
+Fills occupy palette layers 1…K (K = number of palette colours); the Voronoi outline is the next layer up, and the chord overlay (when shown) the layer above that. Colours are applied with vpype's `color --layer` command at the end of `draw()` so they appear in the GUI, and only for layers that actually contain geometry.
 
 ### Dependencies
 `mpmath` is required for full precision. Install with:

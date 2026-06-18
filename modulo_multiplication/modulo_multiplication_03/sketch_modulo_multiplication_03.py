@@ -1,15 +1,20 @@
+import math
+import pathlib
+import random
+import sys
+from collections import Counter
+
+import numpy as np
 import vsketch
 import vpype as vp
-import math
-import random
-from collections import Counter
-import numpy as np
 from scipy.spatial import Voronoi
 
-try:
-    from numba import njit
-except ImportError:
-    def njit(f): return f
+# Make the repo-root `penfill` package importable when run via `vsk run`.
+_REPO = pathlib.Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_REPO))
+from penfill import (FillSpec, GLYPH_TYPES, GRID_TYPES, PATTERN_NAMES,
+                     draw_geometry, fill_polygon, install_swatches, load_pens,
+                     sample_fill, to_polygon)
 
 try:
     import mpmath as _mpmath
@@ -18,90 +23,22 @@ except ImportError:
     print("WARNING: mpmath not found — intersection precision is reduced; "
           "symmetric diagrams may appear asymmetric. Install with: pipx runpip vsketch install mpmath")
 
-_GLYPH_TYPES = ["dash", "circle", "chevron", "plus", "sine", "sawtooth", "triangle_wave"]
+# Pen colours converted from DrawingBot presets (see tools/drawingbot_to_vpype.py).
+PENS = load_pens(_REPO / "pens")            # {pen name: "#rrggbb"}
+PEN_NAMES = list(PENS)
+COLOR_CHOICES = ["none"] + PEN_NAMES
+
+# Show colour swatches next to pen names in the GUI dropdowns (GUI-only no-op).
+install_swatches(PENS)
 
 # Module-level caches — survive instance recreation between draw() calls.
 _VOR_CACHE: dict = {}
 _FILL_CACHE: dict = {}
 
 
-# ── JIT-compiled hot-path helpers ─────────────────────────────────────────────
-
-@njit
-def _pip(px, py, poly_x, poly_y):
-    """Ray-casting point-in-polygon (numpy float64 arrays)."""
-    n = len(poly_x)
-    inside = False
-    j = n - 1
-    for i in range(n):
-        xi, yi = poly_x[i], poly_y[i]
-        xj, yj = poly_x[j], poly_y[j]
-        if ((yi > py) != (yj > py)) and px < (xj - xi) * (py - yi) / (yj - yi) + xi:
-            inside = not inside
-        j = i
-    return inside
-
-
-@njit
-def _cyrus_beck(x1, y1, x2, y2, poly_x, poly_y, cx, cy):
-    """Cyrus-Beck segment clipping against convex polygon.
-
-    Returns (t0, t1) with 0 <= t0 <= t1 <= 1, or (-1, -1) if rejected.
-    The inward normal for each edge is oriented toward (cx, cy).
-    """
-    dx, dy = x2 - x1, y2 - y1
-    t0, t1 = 0.0, 1.0
-    n = len(poly_x)
-    for i in range(n):
-        ax, ay = poly_x[i], poly_y[i]
-        bx = poly_x[(i + 1) % n]
-        by = poly_y[(i + 1) % n]
-        enx = by - ay
-        eny = ax - bx
-        if enx * (cx - ax) + eny * (cy - ay) < 0.0:
-            enx = -enx
-            eny = -eny
-        numer = enx * (x1 - ax) + eny * (y1 - ay)
-        denom = enx * dx + eny * dy
-        if abs(denom) < 1e-15:
-            if numer < 0.0:
-                return -1.0, -1.0
-        elif denom > 0.0:
-            t = -numer / denom
-            if t > t0:
-                t0 = t
-        else:
-            t = -numer / denom
-            if t < t1:
-                t1 = t
-        if t0 > t1:
-            return -1.0, -1.0
-    if t0 > 1.0 or t1 < 0.0:
-        return -1.0, -1.0
-    return max(0.0, t0), min(1.0, t1)
-
-
-# ── Geometry helpers ───────────────────────────────────────────────────────────
-
-
-
-def _pad_polygon(poly_x, poly_y, d):
-    """Expand polygon by pushing each vertex away from its centroid by d."""
-    cx, cy = poly_x.mean(), poly_y.mean()
-    dx, dy = poly_x - cx, poly_y - cy
-    dist = np.sqrt(dx*dx + dy*dy)
-    dist = np.where(dist < 1e-15, 1.0, dist)
-    scale = (dist + d) / dist
-    return cx + dx * scale, cy + dy * scale
-
-
-def _sh_intersect(p1, p2, ax, ay, enx, eny):
-    dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-    d = enx * dx + eny * dy
-    if abs(d) < 1e-15:
-        return p1
-    t = -(enx * (p1[0] - ax) + eny * (p1[1] - ay)) / d
-    return (p1[0] + t * dx, p1[1] + t * dy)
+def _default_color(i: int) -> str:
+    """Default the first few colour slots to the first pens, the rest to none."""
+    return PEN_NAMES[i - 1] if i - 1 < len(PEN_NAMES) else "none"
 
 
 # ── Sketch ────────────────────────────────────────────────────────────────────
@@ -114,6 +51,7 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
     # Page & layout  (changing these costs only a translate + text redraw)
     page_size = vsketch.Param("25cmx25cm")
     landscape = vsketch.Param(False)
+    pen_width = vsketch.Param(0.3, min_value=0.01, decimals=2, unit="mm")
     offset_x = vsketch.Param(0.0)
     offset_y = vsketch.Param(0.0)
     # Labels
@@ -124,23 +62,64 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
     # Chord overlay
     show_chords = vsketch.Param(False)
     chords_on_top = vsketch.Param(True)
-    # Fill  (changing these triggers fill-geometry recomputation, not Voronoi)
+
+    # ── Fill ──────────────────────────────────────────────────────────────────
+    # Cells are grouped by chord count; each distinct count gets its own fill
+    # style and is assigned a palette colour (cycling through the palette).
     fill_cells = vsketch.Param(False)
     fill_by_neighbors = vsketch.Param(False)
+    # "solid" is vsketch's native fill; "hatch"/"glyph_grid" are penfill patterns.
+    fill_pattern = vsketch.Param("glyph_grid", choices=PATTERN_NAMES)
+    random_style = vsketch.Param(True)   # sample a random style per count vs UI knobs
     fill_seed = vsketch.Param(42)
     grid_global_origin = vsketch.Param(True)
-    grid_spacing = vsketch.Param(0.1)    # cm
-    glyph_scale = vsketch.Param(0.03)     # cm ≈ 0.3 mm pen width
-    chevron_beta_a = vsketch.Param(1.0)
-    chevron_beta_b = vsketch.Param(1.0)
-    wave_periods = vsketch.Param(1.0)
-    wave_amplitude = vsketch.Param(0.06)  # cm ≈ 2 × pen width
+    fill_spacing = vsketch.Param(0.1)     # cm
+    size_ratio = vsketch.Param(0.3, min_value=0.05, decimals=2)
+
+    # Colours: pick up to 6 pens for the fill palette; the first "none" ends the
+    # palette.  Each chord-count group is assigned a palette colour in turn.
+    color_1 = vsketch.Param(_default_color(1), choices=COLOR_CHOICES)
+    color_2 = vsketch.Param(_default_color(2), choices=COLOR_CHOICES)
+    color_3 = vsketch.Param(_default_color(3), choices=COLOR_CHOICES)
+    color_4 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_5 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
+    outline_color = vsketch.Param("none", choices=COLOR_CHOICES)  # "none" -> black
+    chord_color = vsketch.Param("none", choices=COLOR_CHOICES)    # "none" -> black
+
+    # Deterministic-style knobs (ignored when random_style is on)
+    grid_type = vsketch.Param("square", choices=GRID_TYPES)
+    glyph_type = vsketch.Param("dash", choices=GLYPH_TYPES)
+    grid_angle = vsketch.Param(0.0)
+    glyph_angle = vsketch.Param(0.0)
+    halton_base_x = vsketch.Param(2, min_value=2)   # used when grid_type == "halton"
+    halton_base_y = vsketch.Param(3, min_value=2)
+    hatch_angle = vsketch.Param(45.0)
+    hatch_cross = vsketch.Param(False)
+
+    # ── palette ─────────────────────────────────────────────────────────────────
+
+    def _palette(self):
+        """Selected fill colours (hex), truncated at the first 'none' slot."""
+        palette = []
+        for c in (self.color_1, self.color_2, self.color_3,
+                  self.color_4, self.color_5, self.color_6):
+            if c == "none":
+                break
+            palette.append(PENS.get(c, "black"))
+        return palette
 
     # ── draw ──────────────────────────────────────────────────────────────────
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size(self.page_size, landscape=self.landscape, center=False)
+        vsk.penWidth(self.pen_width)  # Param unit="mm" -> value already in px
         vsk.scale("cm")
+
+        palette = self._palette()
+        n_colors = max(1, len(palette))
+        outline_layer = n_colors + 1
+        chord_layer = n_colors + 2
 
         # ── Level-1 cache: Voronoi + ridges + histogram ──────────────────────
         vor_key = (self.n, self.r, self.multiplier, self.add_circle)
@@ -163,19 +142,21 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
             bar = '█' * int(hist[k] / max_bar * 40)
             print(f"  {k:3d} chords: {hist[k]:4d}  {bar}")
 
-        # ── Level-2 cache: clipped glyph geometry ────────────────────────────
+        # ── Level-2 cache: penfill geometry ──────────────────────────────────
         if self.fill_cells:
-            fill_key = (vor_key, self.fill_by_neighbors, self.fill_seed,
-                        self.grid_global_origin, self.grid_spacing, self.glyph_scale,
-                        self.chevron_beta_a, self.chevron_beta_b,
-                        self.wave_periods, self.wave_amplitude)
+            fill_key = (vor_key, n_colors, self.fill_by_neighbors, self.fill_pattern,
+                        self.random_style, self.fill_seed, self.grid_global_origin,
+                        self.fill_spacing, self.size_ratio, self.grid_type,
+                        self.glyph_type, self.grid_angle, self.glyph_angle,
+                        self.halton_base_x, self.halton_base_y,
+                        self.hatch_angle, self.hatch_cross)
             if _FILL_CACHE.get('key') != fill_key:
                 _FILL_CACHE.clear()
                 _FILL_CACHE['key'] = fill_key
                 fill_counts = _VOR_CACHE['neighbor_counts'] if self.fill_by_neighbors \
                               else _VOR_CACHE['counts']
                 _FILL_CACHE['geom'] = self._build_fill_geom(
-                    _VOR_CACHE['vor'], fill_counts)
+                    _VOR_CACHE['vor'], fill_counts, n_colors)
 
         # ── Replay ───────────────────────────────────────────────────────────
         px_per_cm = vp.convert_length("1cm")
@@ -184,37 +165,17 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
             vsk.height / px_per_cm / 2 + self.offset_y,
         )
 
-        # ── Layer numbering ───────────────────────────────────────────────────
-        # fill: layers 2..N  (assigned in _build_fill_geom)
-        # outline + text: layer N+1
-        # chords (when on top): layer N+2
-        # chords (when on bottom): layer 1 — outline is pushed to N+1 ≥ 2
-        if self.fill_cells and _FILL_CACHE.get('geom'):
-            max_fill_layer = max(cmd[1] for cmd in _FILL_CACHE['geom'])
-            outline_layer = max_fill_layer + 1
-        else:
-            outline_layer = 1
-
-        chords_below = self.show_chords and not self.chords_on_top
-        if chords_below and outline_layer < 2:
-            outline_layer = 2
-        chord_layer = 1 if chords_below else outline_layer + 1
+        used_fill_layers = set()
 
         # ── Draw (bottom → top) ───────────────────────────────────────────────
-        if chords_below:
+        if self.show_chords and not self.chords_on_top:
             vsk.stroke(chord_layer)
             self._draw_chords(vsk)
 
-        if self.fill_cells:
-            cur_layer = -1
-            for cmd in _FILL_CACHE['geom']:
-                if cmd[1] != cur_layer:
-                    cur_layer = cmd[1]
-                    vsk.stroke(cur_layer)
-                if cmd[0] == 'L':
-                    vsk.line(cmd[2], cmd[3], cmd[4], cmd[5])
-                else:  # 'P'
-                    vsk.polygon(cmd[2], cmd[3], close=cmd[4])
+        if self.fill_cells and _FILL_CACHE.get('geom'):
+            geom = _FILL_CACHE['geom']
+            used_fill_layers = {prim[1] for prim in geom}
+            draw_geometry(vsk, geom)
 
         vsk.stroke(outline_layer)
         for x1, y1, x2, y2 in _VOR_CACHE['ridges']:
@@ -230,10 +191,17 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
             vsk.stroke(chord_layer)
             self._draw_chords(vsk)
 
-        color_cmd = f"color --layer {outline_layer} black"
+        # ── Colours ───────────────────────────────────────────────────────────
+        parts = [f"color --layer {layer} {palette[layer - 1]}"
+                 for layer in sorted(used_fill_layers) if layer - 1 < len(palette)]
+        outline_hex = "black" if self.outline_color == "none" \
+            else PENS.get(self.outline_color, "black")
+        parts.append(f"color --layer {outline_layer} {outline_hex}")
         if self.show_chords:
-            color_cmd += f" color --layer {chord_layer} black"
-        vsk.vpype(color_cmd)
+            chord_hex = "black" if self.chord_color == "none" \
+                else PENS.get(self.chord_color, "black")
+            parts.append(f"color --layer {chord_layer} {chord_hex}")
+        vsk.vpype(" ".join(parts))
 
     # ── Chord overlay ─────────────────────────────────────────────────────────
 
@@ -359,185 +327,65 @@ class ModuloMultiplication03Sketch(vsketch.SketchClass):
 
         return vor, counts, neighbor_counts, ridges, hist
 
-    # ── Level-2 build ─────────────────────────────────────────────────────────
+    # ── Level-2 build (penfill) ─────────────────────────────────────────────────
 
-    def _build_fill_geom(self, vor, counts):
+    def _style_map(self, counts, n_colors):
+        """One FillSpec template per distinct count.
+
+        Each distinct count is assigned a palette layer (cycling) and a fill
+        style.  In random mode the style is sampled per count from a seeded
+        stream; otherwise every count shares the UI-configured style.  The
+        ``origin`` param is filled in per cell at build time.
+        """
         rng = random.Random(self.fill_seed)
         unique_counts = sorted(set(counts))
-        style_map = {c: {
-            'layer':         i + 2,
-            'grid_type':     rng.choice(['square', 'hex']),
-            'glyph_type':    rng.choice(_GLYPH_TYPES),
-            'grid_angle':    rng.uniform(0, 90),
-            'glyph_angle':   rng.uniform(0, 360),
-            'chevron_half':  math.radians(45 + rng.betavariate(self.chevron_beta_a, self.chevron_beta_b) * 30),
-        } for i, c in enumerate(unique_counts)}
+        bases = (self.halton_base_x, self.halton_base_y)
+        style_map = {}
+        for i, c in enumerate(unique_counts):
+            layer = 1 + (i % n_colors)
+            if self.random_style:
+                if self.fill_pattern == "solid":
+                    spec = FillSpec("solid", layer, {})
+                elif self.fill_pattern == "hatch":
+                    spec = sample_fill("hatch", rng, layer=layer,
+                                       spacing=self.fill_spacing)
+                else:  # glyph_grid
+                    spec = sample_fill("glyph_grid", rng, layer=layer,
+                                       spacing=self.fill_spacing,
+                                       halton_bases=bases)
+            else:
+                if self.fill_pattern == "solid":
+                    params = {}
+                elif self.fill_pattern == "hatch":
+                    params = dict(spacing=self.fill_spacing, angle=self.hatch_angle,
+                                  cross=self.hatch_cross)
+                else:  # glyph_grid
+                    params = dict(grid=self.grid_type, spacing=self.fill_spacing,
+                                  size=self.fill_spacing * self.size_ratio,
+                                  glyph=self.glyph_type, angle=self.grid_angle,
+                                  glyph_angle=self.glyph_angle, seed=self.fill_seed,
+                                  halton_bases=bases)
+                spec = FillSpec(self.fill_pattern, layer, params)
+            style_map[c] = spec
+        return style_map
 
+    def _build_fill_geom(self, vor, counts, n_colors):
+        style_map = self._style_map(counts, n_colors)
         geom = []
         for idx, count in enumerate(counts):
             region = vor.regions[vor.point_region[idx]]
             if -1 in region or len(region) < 3:
                 continue
-            poly_x = np.array([vor.vertices[v][0] for v in region], dtype=np.float64)
-            poly_y = np.array([vor.vertices[v][1] for v in region], dtype=np.float64)
-            cx, cy = float(poly_x.mean()), float(poly_y.mean())
-            style = style_map[count]
-            layer = style['layer']
-            pad_x, pad_y = _pad_polygon(poly_x, poly_y, self.glyph_scale)
-            ox, oy = (0.0, 0.0) if self.grid_global_origin else (cx, cy)
-            for px, py in self._grid_points_in_polygon(pad_x, pad_y, style['grid_type'], style['grid_angle'], ox, oy):
-                self._glyph_to_geom(geom, layer, px, py,
-                                     style['glyph_type'], style['glyph_angle'],
-                                     style['chevron_half'], poly_x, poly_y, cx, cy)
+            shell = [(vor.vertices[v][0], vor.vertices[v][1]) for v in region]
+            poly = to_polygon(shell)
+            if not poly.is_valid or poly.area <= 0:
+                continue
+            base = style_map[count]
+            origin = (0.0, 0.0) if self.grid_global_origin else \
+                     (poly.centroid.x, poly.centroid.y)
+            spec = FillSpec(base.pattern, base.layer, {**base.params, "origin": origin})
+            geom += fill_polygon(poly, spec)
         return geom
-
-    # ── grid ──────────────────────────────────────────────────────────────────
-
-    def _grid_basis(self, grid_type, grid_angle_deg):
-        s = self.grid_spacing
-        a = math.radians(grid_angle_deg)
-        ca, sa = math.cos(a), math.sin(a)
-        if grid_type == "hex":
-            e1x, e1y = 1.0, 0.0
-            e2x, e2y = 0.5, math.sqrt(3) / 2
-        else:
-            e1x, e1y = 1.0, 0.0
-            e2x, e2y = 0.0, 1.0
-        ax = s * (ca * e1x - sa * e1y);  ay = s * (sa * e1x + ca * e1y)
-        bx = s * (ca * e2x - sa * e2y);  by = s * (sa * e2x + ca * e2y)
-        return (ax, ay), (bx, by)
-
-    def _grid_points_in_polygon(self, poly_x, poly_y, grid_type, grid_angle_deg, ox=0.0, oy=0.0):
-        (ax, ay), (bx, by) = self._grid_basis(grid_type, grid_angle_deg)
-        # Shift bbox corners into grid-origin-relative space for lattice index bounds.
-        xmin, xmax = float(poly_x.min()) - ox, float(poly_x.max()) - ox
-        ymin, ymax = float(poly_y.min()) - oy, float(poly_y.max()) - oy
-        corners = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
-        det = ax * by - ay * bx
-
-        if abs(det) < 1e-12:
-            ux, uy = (ax, ay) if ax*ax + ay*ay >= bx*bx + by*by else (bx, by)
-            u2 = ux*ux + uy*uy
-            if u2 < 1e-20:
-                return []
-            projs = [(px*ux + py*uy) / u2 for px, py in corners]
-            return [(ox + i*ux, oy + i*uy) for i in range(int(min(projs))-1, int(max(projs))+2)
-                    if _pip(ox + i*ux, oy + i*uy, poly_x, poly_y)]
-
-        inv = 1.0 / det
-        is_ = [(px*by - py*bx) * inv for px, py in corners]
-        js_ = [(py*ax - px*ay) * inv for px, py in corners]
-        imin, imax = int(min(is_)) - 1, int(max(is_)) + 1
-        jmin, jmax = int(min(js_)) - 1, int(max(js_)) + 1
-        if (imax - imin + 1) * (jmax - jmin + 1) > 100_000:
-            return []
-        return [
-            (ox + i*ax + j*bx, oy + i*ay + j*by)
-            for i in range(imin, imax + 1)
-            for j in range(jmin, jmax + 1)
-            if _pip(ox + i*ax + j*bx, oy + i*ay + j*by, poly_x, poly_y)
-        ]
-
-    # ── glyph geometry (no vsk calls) ─────────────────────────────────────────
-
-    def _glyph_to_geom(self, geom, layer, px, py, glyph_type, glyph_angle_deg,
-                        chevron_half, poly_x, poly_y, cx, cy):
-        s = self.glyph_scale
-        a = math.radians(glyph_angle_deg)
-        ca, sa = math.cos(a), math.sin(a)
-
-        def clip_line(x1, y1, x2, y2):
-            t0, t1 = _cyrus_beck(x1, y1, x2, y2, poly_x, poly_y, cx, cy)
-            if t0 < 0.0:
-                return
-            dx, dy = x2 - x1, y2 - y1
-            geom.append(('L', layer, x1 + t0*dx, y1 + t0*dy, x1 + t1*dx, y1 + t1*dy))
-
-        if glyph_type == "circle":
-            N = 48
-            circle_pts = [(px + s * math.cos(2*math.pi*k/N),
-                           py + s * math.sin(2*math.pi*k/N)) for k in range(N)]
-            clipped = self._sutherland_hodgman(circle_pts, poly_x, poly_y, cx, cy)
-            if len(clipped) >= 2:
-                geom.append(('P', layer, [p[0] for p in clipped], [p[1] for p in clipped], True))
-
-        elif glyph_type == "dash":
-            clip_line(px - s*ca, py - s*sa, px + s*ca, py + s*sa)
-
-        elif glyph_type == "plus":
-            clip_line(px - s*ca, py - s*sa, px + s*ca, py + s*sa)
-            clip_line(px + s*sa, py - s*ca, px - s*sa, py + s*ca)
-
-        elif glyph_type == "chevron":
-            bwd = a + math.pi
-            clip_line(px, py, px + s*math.cos(bwd + chevron_half), py + s*math.sin(bwd + chevron_half))
-            clip_line(px, py, px + s*math.cos(bwd - chevron_half), py + s*math.sin(bwd - chevron_half))
-
-        elif glyph_type in ("sine", "sawtooth", "triangle_wave"):
-            period = s
-            total = self.wave_periods * period
-            amp = self.wave_amplitude
-            n_pts = max(int(self.wave_periods * 20) + 1, 3)
-            pts_x, pts_y = [], []
-            for k in range(n_pts):
-                t = (k / (n_pts - 1) - 0.5) * total
-                phase = (t + total * 0.5) / period
-                if glyph_type == "sine":
-                    tr = amp * math.sin(2 * math.pi * phase)
-                elif glyph_type == "sawtooth":
-                    tr = amp * (2 * (phase % 1) - 1)
-                else:
-                    p = phase % 1
-                    tr = amp * (1 - 4 * abs(p - 0.5))
-                pts_x.append(px + t*ca - tr*sa)
-                pts_y.append(py + t*sa + tr*ca)
-
-            run_x, run_y = [], []
-            for k in range(len(pts_x) - 1):
-                t0, t1 = _cyrus_beck(pts_x[k], pts_y[k], pts_x[k+1], pts_y[k+1], poly_x, poly_y, cx, cy)
-                if t0 < 0.0:
-                    if len(run_x) >= 2:
-                        geom.append(('P', layer, run_x, run_y, False))
-                    run_x, run_y = [], []
-                else:
-                    dx, dy = pts_x[k+1] - pts_x[k], pts_y[k+1] - pts_y[k]
-                    x1c, y1c = pts_x[k] + t0*dx, pts_y[k] + t0*dy
-                    x2c, y2c = pts_x[k] + t1*dx, pts_y[k] + t1*dy
-                    if run_x and (abs(x1c - run_x[-1]) > 1e-9 or abs(y1c - run_y[-1]) > 1e-9):
-                        if len(run_x) >= 2:
-                            geom.append(('P', layer, run_x, run_y, False))
-                        run_x, run_y = [x1c], [y1c]
-                    elif not run_x:
-                        run_x, run_y = [x1c], [y1c]
-                    run_x.append(x2c)
-                    run_y.append(y2c)
-            if len(run_x) >= 2:
-                geom.append(('P', layer, run_x, run_y, False))
-
-    def _sutherland_hodgman(self, subject, poly_x, poly_y, cx, cy):
-        output = list(subject)
-        n = len(poly_x)
-        for i in range(n):
-            if not output:
-                return []
-            ax, ay = float(poly_x[i]), float(poly_y[i])
-            bx, by = float(poly_x[(i + 1) % n]), float(poly_y[(i + 1) % n])
-            enx, eny = by - ay, ax - bx
-            if enx * (cx - ax) + eny * (cy - ay) < 0:
-                enx, eny = -enx, -eny
-            inp, output = output, []
-            for j in range(len(inp)):
-                curr = inp[j]
-                prev = inp[j - 1]
-                cd = enx * (curr[0] - ax) + eny * (curr[1] - ay)
-                pd = enx * (prev[0] - ax) + eny * (prev[1] - ay)
-                if cd >= 0:
-                    if pd < 0:
-                        output.append(_sh_intersect(prev, curr, ax, ay, enx, eny))
-                    output.append(curr)
-                elif pd >= 0:
-                    output.append(_sh_intersect(prev, curr, ax, ay, enx, eny))
-        return output
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("linemerge linesimplify reloop linesort")
