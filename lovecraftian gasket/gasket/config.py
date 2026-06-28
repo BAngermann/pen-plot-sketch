@@ -29,6 +29,7 @@ Schema (see ``seeds/*.json`` for examples)::
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,7 +53,7 @@ class Seed:
 @dataclass
 class Config:
     clip: Rect
-    boundary: Seed                 # the enclosing circle (curvature flips on use)
+    boundary: Seed | None          # enclosing circle, or None to pack seed gaps only
     seeds: list[Seed]
     tangencies: list[tuple[str, str]]
     search: dict = field(default_factory=dict)
@@ -62,8 +63,8 @@ class Config:
     def by_id(self) -> dict[str, Seed]:
         return {s.id: s for s in self.seeds}
 
-    def outer_circle(self) -> Circle:
-        return self.boundary.to_circle(inside=True)
+    def outer_circle(self) -> Circle | None:
+        return self.boundary.to_circle(inside=True) if self.boundary else None
 
     def seed_circles(self) -> list[Circle]:
         return [s.to_circle() for s in self.seeds]
@@ -90,12 +91,17 @@ def load(path: str | Path) -> Config:
     landscape = bool(data.get("landscape", False))
     clip = a4_clip(margin=margin, landscape=landscape)
 
-    b = data["boundary"]
-    if b.get("type", "circle") != "circle":
-        raise ValueError("boundary.type must be 'circle' (lines are handled via "
-                         "the margin clip, not Descartes)")
-    boundary = Seed(id="outer", z=_z(b["z"]), r=float(b["r"]),
-                    fixed=True, feature="boundary")
+    # Boundary is optional: omit it (or set "type": "none") to pack only the gaps
+    # between mutually tangent seed circles - a freer, non-circular layout.
+    b = data.get("boundary")
+    if b is None or b.get("type") == "none":
+        boundary = None
+    elif b.get("type", "circle") != "circle":
+        raise ValueError("boundary.type must be 'circle' or 'none' (lines are "
+                         "handled via the margin clip, not Descartes)")
+    else:
+        boundary = Seed(id="outer", z=_z(b["z"]), r=float(b["r"]),
+                        fixed=True, feature="boundary")
 
     seeds = [Seed(id=s["id"], z=_z(s["z"]), r=float(s["r"]),
                   fixed=bool(s.get("fixed", False)),
@@ -118,12 +124,13 @@ def _validate(cfg: Config) -> None:
     if "outer" in ids:
         raise ValueError("'outer' is reserved for the boundary circle")
 
-    # tangency references resolve
-    valid = ids | {"outer"}
+    # tangency references resolve ("outer" only when a boundary exists)
+    valid = ids | ({"outer"} if cfg.boundary else set())
     for a, b in cfg.tangencies:
         for ref in (a, b):
             if ref not in valid:
-                raise ValueError(f"tangency references unknown id {ref!r}")
+                extra = "" if cfg.boundary else " (no boundary: 'outer' is invalid)"
+                raise ValueError(f"tangency references unknown id {ref!r}{extra}")
 
     # fixed (per-seed) and free_ids (flat) must be consistent: a free seed is
     # not fixed and vice-versa.  Redundant on purpose (one documents intent, the
@@ -140,11 +147,14 @@ def _validate(cfg: Config) -> None:
                 f"seed {s.id!r} is not fixed yet absent from free_ids; mark it "
                 "fixed=true or add it to search.free_ids")
 
-    # every seed disk should sit inside the drawable clip
-    for s in cfg.seeds:
-        c = s.to_circle()
-        if not cfg.clip.contains_disk(c, slack=1e-6):
-            raise ValueError(f"seed {s.id!r} extends outside the margin clip")
+    # Seeds ideally sit inside the drawable clip, but a seed poking past the
+    # margins is allowed - it is simply discarded at render (esp. with no
+    # boundary, where snapping can push seeds outward).  Warn rather than fail.
+    outside = [s.id for s in cfg.seeds
+               if not cfg.clip.contains_disk(s.to_circle(), slack=1e-6)]
+    if outside:
+        print(f"warning: seeds extend past the margin clip (will be discarded "
+              f"at render): {outside}", file=sys.stderr)
 
 
 if __name__ == "__main__":

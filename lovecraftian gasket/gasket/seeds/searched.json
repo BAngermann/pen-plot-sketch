@@ -1,0 +1,86 @@
+{
+  "paper": "a4",
+  "margin": 20.0,
+  "landscape": false,
+  "boundary": {
+    "type": "circle",
+    "z": [
+      105.0,
+      148.5
+    ],
+    "r": 90.0,
+    "inside": true
+  },
+  "seeds": [
+    {
+      "id": "s0",
+      "z": [
+        105.0,
+        100.005
+      ],
+      "r": 41.575,
+      "fixed": true,
+      "feature": "eye"
+    },
+    {
+      "id": "s1",
+      "z": [
+        61.25,
+        170.26
+      ],
+      "r": 41.15,
+      "fixed": false,
+      "feature": "eye"
+    },
+    {
+      "id": "s2",
+      "z": [
+        144.871,
+        174.165
+      ],
+      "r": 42.591,
+      "fixed": false,
+      "feature": "orifice"
+    }
+  ],
+  "tangencies": [
+    [
+      "s0",
+      "s1"
+    ],
+    [
+      "s1",
+      "s2"
+    ],
+    [
+      "s0",
+      "s2"
+    ],
+    [
+      "s0",
+      "outer"
+    ],
+    [
+      "s1",
+      "outer"
+    ],
+    [
+      "s2",
+      "outer"
+    ]
+  ],
+  "search": {
+    "free_ids": [
+      "s1",
+      "s2"
+    ],
+    "bounds": {
+      "r": [
+        25,
+        55
+      ]
+    },
+    "r_min": 1.5,
+    "max_gen_in_objective": 4
+  }
+}

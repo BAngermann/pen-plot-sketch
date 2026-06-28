@@ -61,21 +61,26 @@ def a4_clip(margin: float = 20.0, landscape: bool = False) -> Rect:
 # magnitude more - so there is no risk of merging genuinely different circles.
 DEDUP_TOL = 0.02   # mm
 _DEDUP_CELL = 0.5  # mm; bucket size for the spatial hash (>> DEDUP_TOL)
+_OVERLAP_CELL = 8.0  # mm; bucket size for the overlap-rejection grid
 
 
-def pack(seeds: list[Circle], outer: Circle, clip: Rect, *,
-         r_min: float = 1.5, max_depth: int = 40) -> list[Circle]:
+def pack(seeds: list[Circle], outer: Circle | None, clip: Rect, *,
+         r_min: float = 1.5, max_depth: int = 40,
+         reject_overlaps: bool = True) -> list[Circle]:
     """Pack the region bounded by ``outer`` and tangencies among ``seeds``.
 
     ``seeds`` and ``outer`` must already be (approximately) mutually tangent
     where they touch - run :mod:`snap` first on hand-placed circles.  Returns
     all positive-curvature circles inside ``clip`` (the ``outer`` circle itself
     is not emitted).
+
+    ``outer`` may be ``None`` to drop the enclosing circle entirely: only the
+    curvilinear gaps *between* mutually tangent seed circles are filled, so the
+    outer edge follows the seed arrangement rather than a fixed circle.
     """
     out: list[Circle] = []
     buckets: dict[tuple[int, int], list[Circle]] = {}
-
-    members = [outer, *seeds]
+    ogrid: dict[tuple[int, int], list[Circle]] = {}
 
     def _cell(z: complex) -> tuple[int, int]:
         return (int(z.real // _DEDUP_CELL), int(z.imag // _DEDUP_CELL))
@@ -92,11 +97,70 @@ def pack(seeds: list[Circle], outer: Circle, clip: Rect, *,
                         return True
         return False
 
-    # Emit the supplied interior seeds first (so feature tags survive).
+    # Overlap guard: a valid packing has only tangent (overlap ~ 0) or disjoint
+    # circles.  Auto-generated seed graphs (snap satisfies declared edges but is
+    # not a globally consistent packing) can produce intersecting circles, which
+    # the Descartes recursion then propagates.  Reject any circle overlapping an
+    # already-placed one.  Circles are hashed by every cell their bbox covers, so
+    # overlaps between far-apart big circles are still found.
+    def _ocells(c: Circle):
+        z, r = c.z, c.r
+        for cx in range(int((z.real - r) // _OVERLAP_CELL),
+                        int((z.real + r) // _OVERLAP_CELL) + 1):
+            for cy in range(int((z.imag - r) // _OVERLAP_CELL),
+                            int((z.imag + r) // _OVERLAP_CELL) + 1):
+                yield (cx, cy)
+
+    def _oregister(c: Circle) -> None:
+        for cell in _ocells(c):
+            ogrid.setdefault(cell, []).append(c)
+
+    def _overlaps(c: Circle) -> bool:
+        # Drawn gasket circles all have positive curvature and are mutually
+        # *externally* tangent or disjoint - never nested - so a simple
+        # interior-distance test suffices: flag when the disks intersect by more
+        # than the tangency tolerance.  (A "nested" exclusion would wrongly pass
+        # near-duplicate circles, e.g. an other-side Soddy landing on a seed.)
+        if not reject_overlaps:
+            return False
+        checked: set[int] = set()
+        for cell in _ocells(c):
+            for o in ogrid.get(cell, ()):
+                if id(o) in checked:
+                    continue
+                checked.add(id(o))
+                ov = (o.r + c.r) - abs(o.z - c.z)    # >0 means the disks intersect
+                tol = 0.3 + 0.03 * min(o.r, c.r)     # tangency reads as ov ~ 0
+                if ov > tol:
+                    return True
+        return False
+
+    # The overlap grid holds only *drawn* circles.  Overlap blocks DRAWING a
+    # circle, never EXPLORING its subtree: a child may intersect a neighbour yet
+    # still bound curvilinear gaps (toward the other parents) that hold perfectly
+    # valid, visible circles.  Pruning the subtree on overlap would drop those.
+    def _draw(c: Circle) -> bool:
+        if _overlaps(c):
+            return False
+        _oregister(c)
+        out.append(c)
+        return True
+
+    # Seeds first (so feature tags survive).  In-clip seeds are drawn unless they
+    # intersect one already drawn; out-of-clip seeds aren't drawn but still block
+    # overlaps (they occupy space) and still seed the recursion.
+    placed_seeds: list[Circle] = []
     for s in seeds:
-        if s.k > 0 and clip.contains_disk(s):
-            _register(s)
-            out.append(s)
+        if s.k <= 0:
+            continue
+        if clip.contains_disk(s):
+            if _draw(s):
+                placed_seeds.append(s)
+        elif not _overlaps(s):
+            _oregister(s)
+            placed_seeds.append(s)
+
+    members = [outer, *placed_seeds] if outer is not None else list(placed_seeds)
 
     def recurse(c1: Circle, c2: Circle, c3: Circle, known: Circle, depth: int):
         if depth > max_depth:
@@ -118,9 +182,9 @@ def pack(seeds: list[Circle], outer: Circle, clip: Rect, *,
         # recursion that would otherwise blow up at small r_min).
         if _seen(child):
             return
-        _register(child)
-        if inside:                         # only emit disks fully inside the clip
-            out.append(child)
+        _register(child)                   # dedup (always, even if not drawn)
+        if inside:                         # draw only disks fully inside the clip,
+            _draw(child)                   # and only if they don't overlap a drawn one
         recurse(c1, c2, child, c3, depth + 1)
         recurse(c1, c3, child, c2, depth + 1)
         recurse(c2, c3, child, c1, depth + 1)
@@ -141,7 +205,7 @@ def pack(seeds: list[Circle], outer: Circle, clip: Rect, *,
         if not _seen(inner):
             _register(inner)
             if inner.r >= r_min and clip.contains_disk(inner):
-                out.append(inner)
+                _draw(inner)               # drawn only if it doesn't overlap
         # Four triangles around the freshly created inner circle.
         recurse(a, b, inner, c, 2)
         recurse(a, c, inner, b, 2)

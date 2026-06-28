@@ -73,10 +73,11 @@ def plot(cfg, circles, out_path: str) -> None:
     ax.add_patch(Rectangle((clip.x0, clip.y0), clip.x1 - clip.x0,
                            clip.y1 - clip.y0, fill=False, lw=0.8, ec="0.4",
                            ls="--"))
-    # enclosing circle (the packing boundary)
+    # enclosing circle (the packing boundary), if any
     out = cfg.outer_circle()
-    ax.add_patch(MplCircle((out.z.real, out.z.imag), out.r, fill=False,
-                           lw=0.8, ec="tab:red", ls=":"))
+    if out is not None:
+        ax.add_patch(MplCircle((out.z.real, out.z.imag), out.r, fill=False,
+                               lw=0.8, ec="tab:red", ls=":"))
 
     depths = [c.depth for c in circles]
     dmax = max(depths) if depths else 1

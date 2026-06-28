@@ -1,6 +1,6 @@
 """Lovecraftian Apollonian eye-packing - vsketch entry point.
 
-    vsk run sketch_gasket.py        (from this directory)
+    vsk run gasket/sketch_gasket.py   (from the project root)
 
 Loads a seed config, snaps it to tangency, packs the Apollonian gasket down to
 ``r_min`` inside the A4 margin clip (circles outside the margins are discarded),
@@ -20,16 +20,11 @@ _REPO = _HERE.parents[1]
 sys.path.insert(0, str(_REPO))
 
 from config import load                                    # noqa: E402
+from eyestyle import COLOR_CHOICES, build_style, layer_colors  # noqa: E402
 from features import render_circle                         # noqa: E402
 from packing import pack                                   # noqa: E402
-from penfill import install_swatches, load_pens            # noqa: E402
 from snap import snap                                      # noqa: E402
-from style import FRAME_STYLES, OFFSET_MODES, SHADING_MODES, Style  # noqa: E402
-
-PENS = load_pens(_REPO / "pens")
-PEN_NAMES = list(PENS)
-COLOR_CHOICES = ["none"] + PEN_NAMES
-install_swatches(PENS)
+from style import FRAME_STYLES, OFFSET_MODES, SHADING_MODES  # noqa: E402
 
 SEED_FILES = sorted(p.name for p in (_HERE / "seeds").glob("*.json"))
 
@@ -100,51 +95,23 @@ class GasketSketch(vsketch.SketchClass):
     line_color = vsketch.Param("none", choices=COLOR_CHOICES)
     shade_color = vsketch.Param("none", choices=COLOR_CHOICES)
 
-    def _style(self) -> Style:
-        w, h = (297.0, 210.0) if self.landscape else (210.0, 297.0)
-        gaze_point = (self.gaze_x * w, self.gaze_y * h)
-        return Style(
-            eye_big=self.eye_big, eye_min=self.eye_min,
-            iris_ratio=self.iris_ratio, pupil_ratio=self.pupil_ratio,
-            size_jitter_sd=self.size_jitter_sd,
-            offset_mode=self.offset_mode, offset_sd=self.offset_sd,
-            gaze_point=gaze_point, gaze_strength=self.gaze_strength,
-            specular_count=int(self.specular_count),
-            shading_mode=self.shading_mode,
-            hatch_spacing=self.hatch_spacing, hatch_angle=self.hatch_angle,
-            contour_spacing=self.contour_spacing,
-            stipple_density=self.stipple_density,
-            specular_angle=self.specular_angle,
-            specular_sector_deg=self.specular_sector_deg,
-            specular_inner_ratio=self.specular_inner_ratio,
-            specular_reach=self.specular_reach,
-            iris_sector_deg=self.iris_sector_deg,
-            iris_ring_outer_ratio=self.iris_ring_outer_ratio,
-            iris_ring_count=int(self.iris_ring_count),
-            iris_ring_taper_deg=self.iris_ring_taper_deg,
-            tooth_count=int(self.tooth_count), tooth_depth=self.tooth_depth,
-            tooth_width_frac=self.tooth_width_frac,
-            orifice_line_reach=self.orifice_line_reach,
-            orifice_line_width=self.orifice_line_width,
-            orifice_lines_per_gap=int(self.orifice_lines_per_gap),
-            orifice_cross_hatch=bool(self.orifice_cross_hatch),
-            stroke_layer=1, fill_layer=2,
-            frame_style=self.frame_style,
-        )
-
     def _draw_frame(self, vsk, cfg, style) -> None:
         if style.frame_style in ("none",):
             return
         vsk.stroke(style.stroke_layer)
         if style.frame_style in ("circle", "circle+rect"):
             o = cfg.outer_circle()
-            vsk.circle(o.z.real, o.z.imag, radius=o.r)
+            if o is not None:                      # no-op when boundary dropped
+                vsk.circle(o.z.real, o.z.imag, radius=o.r)
         if style.frame_style in ("rect", "circle+rect"):
             r = cfg.clip
             vsk.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0)
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
-        vsk.size("a4", landscape=self.landscape)
+        # center=False: absolute mm coordinates (page top-left = 0,0), so seeds
+        # render at their true positions (matching the margin clip) rather than
+        # vsketch re-centering the bounding box.
+        vsk.size("a4", landscape=self.landscape, center=False)
         vsk.penWidth(self.pen_width)
         vsk.scale("mm")
         if self.snap_seed:
@@ -156,17 +123,12 @@ class GasketSketch(vsketch.SketchClass):
         circles = pack(seeds, outer, cfg.clip,
                        r_min=self.r_min, max_depth=int(self.max_depth))
 
-        style = self._style()
+        style = build_style(self, frame_style=self.frame_style)
         for c in circles:
             render_circle(vsk, c, style)
         self._draw_frame(vsk, cfg, style)
 
-        # Layer colours (mirrors the boxes sketch convention).
-        line_hex = "black" if self.line_color == "none" \
-            else PENS.get(self.line_color, "black")
-        shade_hex = line_hex if self.shade_color == "none" \
-            else PENS.get(self.shade_color, "black")
-        vsk.vpype(f"color --layer 1 {line_hex} color --layer 2 {shade_hex}")
+        vsk.vpype(layer_colors(self))
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("linemerge linesimplify reloop linesort")

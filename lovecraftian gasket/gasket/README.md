@@ -9,14 +9,34 @@ one packing so they read as a coherent series.
 See [`../lovecraftian_apollonian_plan.md`](../lovecraftian_apollonian_plan.md) for the
 full design rationale.
 
+## Folder layout
+
+vsketch keeps each sketch's saved UI configs in a `config/` dir *next to the sketch*, and
+shows all of them in every sketch in the same folder — meaningless across different
+sketches.  So each sketch lives in its own folder, while the shared library and the seed
+interchange stay in `gasket/`:
+
+```
+lovecraftian gasket/
+  gasket/      # this folder: library modules + sketch_gasket.py + seeds/ (interchange)
+  search/      # sketch_search.py  + its config/
+  integral/    # sketch_integral.py + its config/
+```
+
+`search/` and `integral/` bootstrap `../gasket` onto `sys.path` and read/write seeds in
+`../gasket/seeds`, so a crop/arrangement saved in either appears in `sketch_gasket`'s
+`seed_file` dropdown.
+
 ## Running
 
-From this directory, using the vsketch environment:
+From the vsketch environment, run each sketch from the repo:
 
 ```sh
-vsk run sketch_gasket.py            # interactive GUI with all parameters
-vsk save sketch_gasket.py           # render to output/ with default params
-vsk save --param shading_mode hatch,stipple,contour sketch_gasket.py   # one SVG per mode
+vsk run  gasket/sketch_gasket.py        # interactive GUI with all parameters
+vsk save gasket/sketch_gasket.py        # render to output/ with default params
+vsk run  search/sketch_search.py        # arrangement explorer
+vsk run  integral/sketch_integral.py    # integral-packing crop browser
+vsk save --param shading_mode hatch,stipple,contour gasket/sketch_gasket.py  # one SVG per mode
 ```
 
 ## Pipeline
@@ -39,12 +59,17 @@ seeds/*.json  ─load─►  snap-to-tangent  ─►  Apollonian pack  ─►  r
 
 ### Boundary & the irregular frame
 
-The packing region is bounded by an **enclosing circle of negative curvature** (not by
-`k=0` lines — that path has a sign-pairing bug). The **A4 page minus a uniform margin**
-is a separate rectangular **discard clip**: any disk extending past it is dropped. The
-**irregular frame** emerges from this clipping. You can also add very large
-positive-curvature circles as seeds to approximate flat edges / richer frames — they act
-as boundary (cropped, never drawn) without being packed-in.
+The packing region is optionally bounded by an **enclosing circle of negative curvature**
+(not by `k=0` lines — that path has a sign-pairing bug). The **A4 page minus a uniform
+margin** is a separate rectangular **discard clip**: any disk extending past it is
+dropped. The **irregular frame** emerges from this clipping.
+
+The **boundary is optional** (`"type": "none"` or omit it). With no enclosing circle the
+recursion fills only the curvilinear gaps *between* mutually tangent seed circles, so the
+outer edge follows the seed arrangement rather than a fixed circle — a freer, non-circular
+layout (seeds that snap outward past the margins are simply discarded). You can also add
+very large positive-curvature circles as seeds to approximate flat edges / richer frames —
+they act as boundary (cropped, never drawn) without being packed-in.
 
 ## Files
 
@@ -56,9 +81,17 @@ as boundary (cropped, never drawn) without being packed-in.
 | `snap.py`        | Snap-to-tangent least-squares pre-pass. |
 | `style.py`       | `Style` dataclass + shading / frame enums + feature-mapping defaults. |
 | `features.py`    | `eye()`, `orifice()`, `tissue()`, shading dispatch. |
+| `eyestyle.py`    | Shared eye-shading plumbing: pen palette, `build_style(sk)` (maps a sketch's params → `Style`), `layer_colors(sk)`. Used by `sketch_gasket` and `sketch_integral`. |
 | `diagnostics.py` | Headless matplotlib plot + scalar objective terms. `python diagnostics.py seeds/x.json`. |
-| `sketch_gasket.py` | vsketch entry point. |
-| `seeds/*.json`   | Seed configurations. |
+| `search.py`      | CMA-ES arrangement search over the `free_ids` seeds; random-config + tangency-graph helpers; writes `seeds/*.json`. |
+| `integral.py`    | Integral Apollonian root quadruples (sequential family + Wikipedia) and their placement. `python integral.py` self-checks. |
+| `sketch_gasket.py` | vsketch entry point (final eye render). |
+| `../search/sketch_search.py` | Interactive search-result **explorer**: anchor + random seeds, snap/pack, score overlay, save. |
+| `../integral/sketch_integral.py` | **Integral-packing crop browser**: pick a packing, zoom/pan, recurse, save a crop. Has the full eye-shading UI (`as_eyes`). |
+| `seeds/*.json`   | Seed configurations (shared interchange). |
+
+> The two finder sketches live in sibling folders (`../search`, `../integral`) so each has
+> its own vsketch `config/`; they import the library from `gasket/` and share `seeds/`.
 
 ## Parameters
 
@@ -170,6 +203,7 @@ the `boxes` sketch.
   "margin": 20,
   "landscape": false,
   "boundary": { "type": "circle", "z": [105, 148.5], "r": 90, "inside": true },
+  "_boundary_none": "use { \"type\": \"none\" } (or omit) to drop the enclosing circle",
   "seeds": [
     { "id": "s0", "z": [105, 100], "r": 42, "fixed": true,  "feature": "eye" },
     { "id": "s1", "z": [63, 173],  "r": 42, "fixed": false, "feature": "eye" },
@@ -188,17 +222,97 @@ the `boxes` sketch.
 - `feature` deliberately tags a seed (e.g. `"orifice"`); otherwise features are assigned
   by size.
 
+## Arrangement search
+
+`search.py` runs CMA-ES over the `free_ids` seeds (each as `x, y, r`); every proposal is
+projected back onto the tangency manifold by `snap`, shallow-packed, and scored. The
+objective (minimised) weighs **per-seed-triangle radius coherence** (aggregated as a
+90th-percentile or max knob, over **uncropped circles only**), **usable-eye count**, and
+**spatial spread**, with a penalty keeping seeds inside the margins. The winner is written
+back in the same seed-JSON schema (snapped seeds, so `load`→`snap` is ~identity):
+
+```sh
+python search.py seeds/irregular_frame.json --out seeds/searched.json \
+    --iters 200 --agg p90        # --agg max for worst-case coherence
+# weights: --w-coh --w-eye --w-spread --w-clip
+```
+
+Richer seed sets (more free seeds, looser tangencies) give the optimiser more room; a
+3-seeds-in-a-circle config is nearly geometrically determined, so it mostly fine-tunes
+radii.
+
+### Explorer (`sketch_search.py`)
+
+An interactive way to *find* arrangements: `vsk run search/sketch_search.py`. Fix one **anchor**
+circle (`anchor_x/y/r`), scatter `n_circles` random circles (Gaussian centre & radius,
+sds `center_sd` / `radius_sd`), wire them into a tangency graph, snap, pack, and draw with
+the objective score overlaid. It's a **re-roll explorer**: change `random_seed` / the sds
+to browse arrangements instantly.
+
+| Param | Meaning |
+|-------|---------|
+| `use_boundary` | Off by default — no enclosing circle, so the layout is free (fills seed gaps only). On = pack inside a `boundary_r` circle. |
+| `tangency_mode` | `delaunay` (triangulate the centres) or `star` (each circle tangent to the anchor; chained into a ring when there's no boundary). |
+| `random_seed` | Re-rolls the random circles (reproducible). |
+| `anchor_move`, `anchor_r_move` | How far CMA-ES may nudge the anchor's centre / radius (mm) when refining. |
+| `refine` | Run a short CMA-ES (`refine_iters`) on the current draw — also frees the anchor within its move bounds. |
+| `save_seed`, `save_name` | Write the current arrangement to `seeds/<save_name>` (snapped seeds) for use in `sketch_gasket`. |
+
+Layers in the explorer: gray = Apollonian fill, blue = seed circles, red = anchor,
+**orange = a conflicting seed** (one that snap overlapped with another — common with a
+degenerate graph like a tiny anchor ringed by big circles; the score shows `CONFLICTS=N`),
+light gray = boundary + margin frame, black = the score text. Conflicting seeds are
+dropped from the packing (and from a saved seed file) so the result never has intersecting
+circles — re-roll or adjust (bigger anchor, fewer circles) to clear them.
+
+Random circles are rejection-sampled to be disjoint, and `pack` rejects any circle that
+significantly overlaps an already-placed one — auto-generated seed graphs aren't globally
+consistent packings, so without these guards the Descartes recursion produces intersecting
+circles. (Tangency reads as ~0 overlap, so valid packings are untouched.)
+
+### Integral-packing crop browser (`sketch_integral.py`)
+
+A second finder, for **integral Apollonian packings** (all-integer curvatures —
+[wiki](https://en.wikipedia.org/wiki/Apollonian_gasket#Integral_Apollonian_circle_packings)).
+These are clean, self-consistent gaskets, so there's no snapping or overlap-fixing: pick a
+catalogued packing and frame a crop. `integral.py` holds the root quadruples — the
+**sequential family** `(-n, n+1, n(n+1), n(n+1)+1)` (n=1…14) first, then curated Wikipedia
+primitives (29 in all, each Descartes-validated and placed tangent).
+
+| Param | Meaning |
+|-------|---------|
+| `packing_index` | Browse the catalogue (`0…28`); the overlay shows the quadruple + circle count. |
+| `enclosing_x`, `enclosing_y` | Page-space position (mm) of the **enclosing circle** — pan the gasket under the page window. |
+| `enclosing_r` | Enclosing-circle radius (mm). Usually **larger than the page**, so the page is a *crop*; raise to zoom in, lower to see the whole gasket. |
+| `r_min`, `max_depth` | Smallest circle drawn / recursion cap. |
+| `recursion_depth` | Recursively re-pack the **largest** circle (always a root seed, *even if it is cropped by the page*): treat it as the enclosing circle of a fresh packing with the *same* quadruple, and repeat into that sub-packing's largest circle. The sub-packing is clipped to the page like everything else. `0` = off. Only the single largest is recursed (the other large circles stay plain). In `as_eyes` mode an on-page encloser is drawn as a plain outline (its interior holds the sub-packing); a cropped encloser is filled but its outline isn't drawn. |
+| `as_eyes` | Preview the crop rendered as gasket eyes (else plain circles). |
+| `save_seed`, `save_name` | Write the crop to `seeds/<save_name>` (boundary = the huge enclosing circle + the 3 root circles) — `sketch_gasket` regenerates the same crop and renders it as eyes. *Captures the base packing only*; for a recursive crop, render it directly here with `as_eyes`. |
+
+The page is a window: move `enclosing_x/y` and change `enclosing_r` to hunt for an
+appealing region, then save it for `sketch_gasket`.
+
+**Off-page / infinite-radius anchor.** The anchor may sit far off the page with a huge
+radius to approximate a flat `k=0` boundary: place its *edge* near a page margin (e.g.
+anchor centre `(190+R, y)`, radius `R` large ⇒ left edge ≈ x=190 ≈ a vertical line). The
+sketch uses `vsk.size(..., center=False)`, so absolute mm coordinates are kept and a big
+off-page anchor doesn't shove the composition around. If the anchor's *edge* is far from
+the page (not just its centre), the circles tangent to it land off-page too.
+
+**Sizes vs the sampled distribution.** Sampled radii are starting guesses; snap then
+satisfies tangency by moving centres while keeping radii close to the samples (mild radius
+anchor; radii hard-bounded to `[0.3×, 6×]` so nothing balloons to bridge a distant
+neighbour). But tangent-circle geometry constrains sizes: a dense **Delaunay** graph is a
+Koebe packing whose radii must vary several-fold, and a **star** ring must "close" around
+the anchor — so sampled sizes are honoured only where the geometry allows.
+
 ## Status
 
-The geometry, packing, snap, renderer, and all four shading modes (`hatch`, `stipple`,
-`contour`, `ringed`) are implemented and verified.
+The geometry, packing, snap, renderer (all four shading modes), and the CMA-ES search are
+implemented and verified.
 
 ## Future directions
 
-- **CMA-ES arrangement search** (`search.py`) — find seed configs with good radius
-  coherence / eye-band counts. Per-triangle coherence should aggregate as a 90th-pctile
-  vs max knob, over **uncropped circles only** (large croppable seeds may approximate a
-  flat `k=0` boundary and must not pollute the statistic).
 - **Veins** routed along the interstitial curvilinear-triangle gaps between tangent
   circles (wandering, branching Bézier paths).
 - **Blended gaze + random offset** — let the `gaze` mode carry a little random scatter

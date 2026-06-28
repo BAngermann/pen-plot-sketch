@@ -5,7 +5,7 @@
   "_comment": "Irregular frame: the enclosing circle is slightly wider than the drawable area so the left/right edges get clipped flat by the 2cm margin while top/bottom stay rounded. Any circle poking past the margin rect is discarded (see packing.Rect.contains_disk).",
   "boundary": {"type": "circle", "z": [105, 148.5], "r": 90, "inside": true},
   "seeds": [
-    {"id": "s0", "z": [105, 100], "r": 42, "fixed": true,  "feature": "eye"},
+    {"id": "s0", "z": [105, 100], "r": 41.5, "fixed": true,  "feature": "eye"},
     {"id": "s1", "z": [63, 173],  "r": 42, "fixed": false, "feature": "eye"},
     {"id": "s2", "z": [147, 173], "r": 42, "fixed": false, "feature": "orifice"}
   ],

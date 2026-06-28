@@ -253,9 +253,11 @@ def tissue(vsk, c: Circle, style: Style) -> None:
     z, r = c.z, c.r
     vsk.stroke(style.stroke_layer)
     vsk.circle(z.real, z.imag, radius=r)
-    # a single negative-space dot keeps it consistent with the eyes
+    # a single negative-space dot keeps it consistent with the eyes.  Fill region
+    # radius == the drawn outline radius (r), like the eye pupil, so the hatch
+    # meets the outline (it used to be 0.92*r, leaving a visible gap on small eyes).
     spec = _disk(z + complex(-0.3 * r, -0.3 * r), 0.22 * r)
-    region = _disk(z, r * 0.92).difference(spec)
+    region = _disk(z, r).difference(spec)
     _shade_region(vsk, region, center=z, radius=r, style=style)
 
 

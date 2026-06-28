@@ -59,7 +59,19 @@ class FillSpec:
 
 
 def fill_polygon(poly, spec: FillSpec) -> Geometry:
-    """Render ``spec`` over ``poly`` and return layer-tagged geometry."""
+    """Render ``spec`` over ``poly`` and return layer-tagged geometry.
+
+    The ``overfill`` param (mm, default 0) grows the clip region outward before
+    filling, so fill lines run *past* the polygon edge.  Set it to about half the
+    pen width to make a hatch/stipple meet the shape's outline instead of stopping
+    a half-stroke short of it (the finite pen otherwise under-covers a curved
+    boundary).  Inner holes shrink by the same amount, closing the gap there too.
+    """
+    overfill = spec.params.get("overfill", 0.0)
+    if overfill:
+        poly = poly.buffer(overfill)
+        if poly.is_empty:
+            return []
     render, _ = PATTERNS[spec.pattern]
     return render(poly, spec.params, spec.layer)
 

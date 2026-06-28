@@ -1,0 +1,91 @@
+{
+  "paper": "a4",
+  "margin": 20.0,
+  "landscape": false,
+  "boundary": {
+    "type": "none"
+  },
+  "seeds": [
+    {
+      "id": "anchor",
+      "z": [
+        1729.997,
+        150.0
+      ],
+      "r": 1550.0,
+      "fixed": true,
+      "feature": "eye"
+    },
+    {
+      "id": "c0",
+      "z": [
+        171.535,
+        140.085
+      ],
+      "r": 8.494,
+      "fixed": false,
+      "feature": "eye"
+    },
+    {
+      "id": "c1",
+      "z": [
+        176.805,
+        150.515
+      ],
+      "r": 3.192,
+      "fixed": false,
+      "feature": "eye"
+    },
+    {
+      "id": "c2",
+      "z": [
+        158.408,
+        167.258
+      ],
+      "r": 21.684,
+      "fixed": false,
+      "feature": "eye"
+    }
+  ],
+  "tangencies": [
+    [
+      "anchor",
+      "c0"
+    ],
+    [
+      "anchor",
+      "c1"
+    ],
+    [
+      "anchor",
+      "c2"
+    ],
+    [
+      "c0",
+      "c1"
+    ],
+    [
+      "c1",
+      "c2"
+    ],
+    [
+      "c2",
+      "c0"
+    ]
+  ],
+  "search": {
+    "free_ids": [
+      "c0",
+      "c1",
+      "c2"
+    ],
+    "bounds": {
+      "r": [
+        5.0,
+        60.0
+      ]
+    },
+    "r_min": 2.0,
+    "max_gen_in_objective": 14
+  }
+}
