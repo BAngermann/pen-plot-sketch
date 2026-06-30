@@ -3,8 +3,8 @@
     vsk run gasket/sketch_gasket.py   (from the project root)
 
 Loads a seed config, snaps it to tangency, packs the Apollonian gasket down to
-``r_min`` inside the A4 margin clip (circles outside the margins are discarded),
-then renders each circle as a manga eye / orifice / tissue.  A coherent series is
+``eye_min`` inside the A4 margin clip (circles outside the margins are discarded),
+then renders each circle as an elaborate / simple eye or orifice.  A coherent series is
 produced by sweeping only ``shading_mode``; ``frame_style`` and the seed file are
 the other top-level choices.
 """
@@ -24,7 +24,8 @@ from eyestyle import COLOR_CHOICES, build_style, layer_colors  # noqa: E402
 from features import render_circle                         # noqa: E402
 from packing import pack                                   # noqa: E402
 from snap import snap                                      # noqa: E402
-from style import FRAME_STYLES, OFFSET_MODES, SHADING_MODES  # noqa: E402
+from style import (DROP_CURVES, FRAME_STYLES, OFFSET_MODES,  # noqa: E402
+                   SHADING_MODES, TEETH_MODES)
 
 SEED_FILES = sorted(p.name for p in (_HERE / "seeds").glob("*.json"))
 
@@ -35,23 +36,27 @@ class GasketSketch(vsketch.SketchClass):
     landscape = vsketch.Param(False)
     # NOTE on units: a Param with unit="mm" is auto-converted to *document pixels*
     # (1 mm -> 3.78 px at 96 dpi) when read inside draw().  Our geometry works in
-    # millimetres, so length params consumed in mm-space (r_min, eye_*, *_spacing)
-    # must NOT use unit="mm" or they arrive ~3.78x too large.  Only pen_width keeps
+    # millimetres, so length params consumed in mm-space (eye_*, *_spacing) must
+    # NOT use unit="mm" or they arrive ~3.78x too large.  Only pen_width keeps
     # unit="mm" because vsk.penWidth() genuinely wants pixels.
     pen_width = vsketch.Param(0.3, min_value=0.01, decimals=2, unit="mm")
-    snap_seed = vsketch.Param(0)            # vsk.randomSeed for stipple/orifice jitter
 
     # --- packing
-    r_min = vsketch.Param(2.0, min_value=0.5, decimals=2)   # mm
     max_depth = vsketch.Param(40, min_value=1)
 
     # --- the coherent-series axis + frame
     shading_mode = vsketch.Param("hatch", choices=SHADING_MODES)
     frame_style = vsketch.Param("circle", choices=FRAME_STYLES)
 
-    # --- feature mapping (mm radius)
+    # --- feature mapping (mm radius): r >= eye_big -> elaborate eye; eye_min <= r
+    # < eye_big -> simple eye; r < eye_min -> vein (future).  Recursion stops at
+    # eye_min, so raise eye_min for a coarser gasket.
     eye_big = vsketch.Param(9.0, min_value=1.0, decimals=1)   # mm
     eye_min = vsketch.Param(3.5, min_value=0.5, decimals=1)   # mm
+    # Per-circle uniform jitter (mm, full width) on each cutoff so the elaborate/
+    # simple/vein split isn't a hard radius line.  0 = sharp cutoff.
+    eye_big_jitter = vsketch.Param(0.0, min_value=0.0, decimals=1)  # mm
+    eye_min_jitter = vsketch.Param(0.0, min_value=0.0, decimals=1)  # mm
 
     # --- eye proportions
     iris_ratio = vsketch.Param(0.62, min_value=0.1, max_value=0.95, decimals=2)
@@ -90,6 +95,15 @@ class GasketSketch(vsketch.SketchClass):
     orifice_line_width = vsketch.Param(0.035, min_value=0.005, max_value=0.2, decimals=3)
     orifice_lines_per_gap = vsketch.Param(2, min_value=0, max_value=8)
     orifice_cross_hatch = vsketch.Param(True)
+    # teeth layout: "ring" (single rim row) or "spiral" (sunflower phyllotaxis,
+    # tooth count = a random Fibonacci per orifice).  The drop_* knobs thin the
+    # spiral: lose teeth with prob drop_inner near spiral_inner falling to
+    # drop_outer at the rim, eased by drop_curve.
+    teeth_mode = vsketch.Param("ring", choices=TEETH_MODES)
+    spiral_inner = vsketch.Param(0.18, min_value=0.0, max_value=0.95, decimals=2)
+    drop_inner = vsketch.Param(0.92, min_value=0.0, max_value=1.0, decimals=2)
+    drop_outer = vsketch.Param(0.05, min_value=0.0, max_value=1.0, decimals=2)
+    drop_curve = vsketch.Param("linear", choices=DROP_CURVES)
 
     # --- colours (layer 1 = line work, layer 2 = dark shading); "none" -> black
     line_color = vsketch.Param("none", choices=COLOR_CHOICES)
@@ -114,14 +128,17 @@ class GasketSketch(vsketch.SketchClass):
         vsk.size("a4", landscape=self.landscape, center=False)
         vsk.penWidth(self.pen_width)
         vsk.scale("mm")
-        if self.snap_seed:
-            vsk.randomSeed(self.snap_seed)
+        # Eye jitter (size/offset, stipple, orifice) uses vsketch's own RNG, seeded
+        # via the GUI seed field / `vsk save --seed`.
 
         cfg = load(_HERE / "seeds" / self.seed_file)
         seeds = snap(cfg)
         outer = cfg.outer_circle()
+        # Pack a half-jitter below eye_min so the vein cutoff has circles on both
+        # sides of its jittered line (otherwise the jitter only ever removes eyes).
+        r_floor = max(0.1, self.eye_min - 0.5 * self.eye_min_jitter)
         circles = pack(seeds, outer, cfg.clip,
-                       r_min=self.r_min, max_depth=int(self.max_depth))
+                       r_min=r_floor, max_depth=int(self.max_depth))
 
         style = build_style(self, frame_style=self.frame_style)
         for c in circles:

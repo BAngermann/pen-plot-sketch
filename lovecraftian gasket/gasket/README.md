@@ -2,8 +2,8 @@
 
 A pen-plotter (vsketch) sketch that fills an **Apollonian circle packing** and renders
 each packed circle as a Lovecraftian feature: manga-style **eyes** (pupil + iris +
-negative-space specular highlights), **tooth-studded orifices**, and **bulging tissue**
-at the smallest scales. Several **shading variants** (hatch / stipple / contour / ringed) share
+negative-space specular highlights), **tooth-studded orifices**, and a simpler eye at mid scales (interstitial **veins**
+are planned for the gaps below). Several **shading variants** (hatch / stipple / contour / ringed) share
 one packing so they read as a coherent series.
 
 See [`../lovecraftian_apollonian_plan.md`](../lovecraftian_apollonian_plan.md) for the
@@ -51,10 +51,10 @@ seeds/*.json  ─load─►  snap-to-tangent  ─►  Apollonian pack  ─►  r
 2. **Snap** (`snap.py`) — a least-squares pre-pass nudges seed radii/positions so the
    declared tangencies are exactly met (hand-placed circles are never quite tangent).
 3. **Pack** (`packing.py`) — Apollonian recursion fills every curvilinear triangle down
-   to `r_min`, using the sign-free Descartes *reflection* identity. Any circle poking
+   to `eye_min`, using the sign-free Descartes *reflection* identity. Any circle poking
    past the **A4 minus margins** rectangle is discarded.
-4. **Render** (`features.py` + `style.py`) — each circle becomes an eye, orifice, or
-   tissue patch; the specular highlights are left as **negative space** (the shading is
+4. **Render** (`features.py` + `style.py`) — each circle becomes an elaborate eye, a
+   simpler eye, or an orifice; the specular highlights are left as **negative space** (the shading is
    drawn *around* them).
 
 ### Boundary & the irregular frame
@@ -80,7 +80,7 @@ they act as boundary (cropped, never drawn) without being packed-in.
 | `config.py`      | Seed JSON schema, loader, validation. |
 | `snap.py`        | Snap-to-tangent least-squares pre-pass. |
 | `style.py`       | `Style` dataclass + shading / frame enums + feature-mapping defaults. |
-| `features.py`    | `eye()`, `orifice()`, `tissue()`, shading dispatch. |
+| `features.py`    | `eye()` (elaborate), `simple_eye()`, `orifice()`, shading dispatch. |
 | `eyestyle.py`    | Shared eye-shading plumbing: pen palette, `build_style(sk)` (maps a sketch's params → `Style`), `layer_colors(sk)`. Used by `sketch_gasket` and `sketch_integral`. |
 | `diagnostics.py` | Headless matplotlib plot + scalar objective terms. `python diagnostics.py seeds/x.json`. |
 | `search.py`      | CMA-ES arrangement search over the `free_ids` seeds; random-config + tangency-graph helpers; writes `seeds/*.json`. |
@@ -101,13 +101,17 @@ they act as boundary (cropped, never drawn) without being packed-in.
 | `seed_file`  | first in `seeds/` | Which seed configuration to pack. |
 | `landscape`  | `False` | A4 portrait vs landscape. |
 | `pen_width`  | `0.3 mm` | Stroke width (also drives `linemerge` in finalize). |
-| `snap_seed`  | `0` | RNG seed for stipple/orifice jitter (`0` = vary each run). |
+
+Per-eye jitter (size/offset, stipple, orifice) uses vsketch's own RNG — set the **seed**
+via the GUI seed field or `vsk save --seed N` for a reproducible render.
 
 ### Packing
 | Param | Default | Meaning |
 |-------|---------|---------|
-| `r_min`     | `2.0 mm` | Stop recursion below this radius; smaller circles become tissue. |
 | `max_depth` | `40` | Hard recursion-depth cap. |
+
+The recursion floors at `eye_min` (the smallest feature, see below) — there is no separate
+radius cutoff.
 
 The page size (A4) and margin (2 cm) come from the seed JSON (`paper`, `margin`); circles
 outside `page − margin` are discarded.
@@ -115,24 +119,29 @@ outside `page − margin` are discarded.
 ### Coherent-series axis + frame
 | Param | Choices | Meaning |
 |-------|---------|---------|
-| `shading_mode` | `hatch` / `stipple` / `contour` / `ringed` | How eyes (pupils/iris) and orifice/tissue throats are shaded. The only axis that should vary across a coherent series. |
+| `shading_mode` | `hatch` / `stipple` / `contour` / `ringed` | How eyes (pupils/iris) and orifice/simple-eye fills are shaded. The only axis that should vary across a coherent series. |
 | `frame_style`  | `none` / `circle` / `rect` / `circle+rect` | Whether to ink the enclosing circle and/or the margin rectangle. |
 
 `hatch` / `stipple` / `contour` differ only in how the pupil is filled (disc
 highlights left as negative space). **`ringed`** is a distinct manga look: the pupil
 is hatched with a **negative-space sector specular** (a blunted wedge), and part of
 the iris is shaded with **concentric arc-rings** filling a wider sector in the same
-direction. For `ringed`, tissue/orifice throats fall back to plain hatch so the
+direction. For `ringed`, simple-eye/orifice fills fall back to plain hatch so the
 series stays coherent.
 
 ### Feature mapping (millimetre radii)
+Two eye renderers, split by size:
 | Param | Default | Meaning |
 |-------|---------|---------|
-| `eye_big` | `9.0 mm` | `r ≥ eye_big` → full manga eye. |
-| `eye_min` | `3.5 mm` | `eye_min ≤ r < eye_big` → small eye; `r < eye_min` → tissue. |
+| `eye_big` | `9.0 mm` | `r ≥ eye_big` → **elaborate eye** (sclera + iris + pupil structure). |
+| `eye_min` | `3.5 mm` | `eye_min ≤ r < eye_big` → **simple eye** (plain shaded fill + one specular dot). `r < eye_min` → **vein** (interstitial filler — not yet implemented, so not drawn). Also the recursion floor. |
+| `eye_big_jitter` | `0.0 mm` | Per-circle uniform jitter (full width) on the `eye_big` cutoff, so circles near it don't all become the same feature — softens the over-regular elaborate/simple banding. `0` = hard cutoff. |
+| `eye_min_jitter` | `0.0 mm` | Same for the `eye_min` (simple-eye / vein) cutoff. The packing floors a half-jitter below `eye_min` so the jittered line has circles on both sides (else the jitter could only ever drop eyes). |
 
-A circle's explicit `feature` tag in the JSON (e.g. `"orifice"`) overrides size-based
-assignment.
+A circle's explicit `feature` tag in the JSON wins for `"orifice"` (tooth-studded maw);
+otherwise size decides. Each circle draws an independent uniform offset in
+`[-jitter/2, +jitter/2]` for each cutoff (seeded by the vsketch seed, so renders are
+reproducible).
 
 ### Eye proportions
 | Param | Default | Meaning |
@@ -143,8 +152,8 @@ assignment.
 
 ### Per-eye randomization & gaze
 The sclera stays centered; the iris+pupil group is jittered in size and position. All
-offsets are auto-clamped so the iris never pokes past the sclera. Reproducible when
-`snap_seed` is non-zero.
+offsets are auto-clamped so the iris never pokes past the sclera. Reproducible for a
+given **seed** (`vsk save --seed N` / the GUI seed field).
 | Param | Default | Meaning |
 |-------|---------|---------|
 | `size_jitter_sd` | `0.05` | Pupil & iris size each ×`(1 + N(0, sd))` (independent draws). |
@@ -178,13 +187,28 @@ A solid dark (cross-hatched) disc; the **teeth** and irregular **radial streaks*
 negative space (paper) carved out of the fill, so the pale teeth read in stark contrast.
 | Param | Default | Meaning |
 |-------|---------|---------|
-| `tooth_count` | `14` | Inward-pointing teeth around the rim. |
-| `tooth_depth` | `0.34` | Tooth reach inward, as a fraction of radius. |
+| `tooth_count` | `14` | `ring` mode: inward-pointing teeth around the rim. (Also sets the streak count in both modes.) |
+| `tooth_depth` | `0.34` | Tooth reach inward, as a fraction of radius (`ring` mode). |
 | `tooth_width_frac` | `0.45` | Angular fraction of each slot a tooth fills (narrower → more distinct fangs, more dark between them). |
 | `orifice_line_reach` | `0.33` | Inner end of the white streaks, as a fraction of radius. |
 | `orifice_line_width` | `0.035` | Max streak width, as a fraction of radius. |
 | `orifice_lines_per_gap` | `2` | Streak density (placed at random angles around the rim, not literally per-gap). |
 | `orifice_cross_hatch` | `True` | Cross-hatch the fill so it reads stark/dark. |
+
+**Teeth layout.** `teeth_mode` picks `ring` (the single rim row above) or `spiral` — a
+**sunflower phyllotaxis**: teeth sit on a golden-angle (≈137.5°) lattice whose size is a
+random Fibonacci number per orifice (`34 / 55 / 89 / 144`, well below a real head but
+enough to resolve the spiral arms while keeping teeth big enough to pen-plot), each tooth
+pointing inward toward the centre.  The radial folds/streaks are dropped in this mode — the
+lattice is already the pattern.
+
+| Param | Default | Meaning |
+|-------|---------|---------|
+| `teeth_mode` | `ring` | `ring` (rim row) or `spiral` (sunflower lattice). |
+| `spiral_inner` | `0.18` | `spiral`: no teeth inside this fraction of the radius (the bare centre). |
+| `drop_inner` | `0.92` | `spiral`: probability a lattice site **loses** its tooth at `spiral_inner` (near 1 → sparse centre). |
+| `drop_outer` | `0.05` | `spiral`: tooth-loss probability at the rim (near 0 → dense edge). |
+| `drop_curve` | `linear` | `spiral`: easing of the loss probability from `drop_inner`→`drop_outer` across the radius — `linear`, `sqrt` (drops off fast → fuller middle), or `square` (stays high → sparser middle). |
 
 ### Colours
 | Param | Default | Meaning |
@@ -246,14 +270,14 @@ radii.
 An interactive way to *find* arrangements: `vsk run search/sketch_search.py`. Fix one **anchor**
 circle (`anchor_x/y/r`), scatter `n_circles` random circles (Gaussian centre & radius,
 sds `center_sd` / `radius_sd`), wire them into a tangency graph, snap, pack, and draw with
-the objective score overlaid. It's a **re-roll explorer**: change `random_seed` / the sds
-to browse arrangements instantly.
+the objective score overlaid. It's a **re-roll explorer**: change the **seed** (GUI seed
+field / `vsk save --seed N`) / the sds to browse arrangements instantly.
 
 | Param | Meaning |
 |-------|---------|
 | `use_boundary` | Off by default — no enclosing circle, so the layout is free (fills seed gaps only). On = pack inside a `boundary_r` circle. |
 | `tangency_mode` | `delaunay` (triangulate the centres) or `star` (each circle tangent to the anchor; chained into a ring when there's no boundary). |
-| `random_seed` | Re-rolls the random circles (reproducible). |
+| (the vsketch **seed**) | Re-rolls the random circles (reproducible) — set it via the GUI seed field or `vsk save --seed N`. |
 | `anchor_move`, `anchor_r_move` | How far CMA-ES may nudge the anchor's centre / radius (mm) when refining. |
 | `refine` | Run a short CMA-ES (`refine_iters`) on the current draw — also frees the anchor within its move bounds. |
 | `save_seed`, `save_name` | Write the current arrangement to `seeds/<save_name>` (snapped seeds) for use in `sketch_gasket`. |
@@ -284,13 +308,15 @@ primitives (29 in all, each Descartes-validated and placed tangent).
 | `packing_index` | Browse the catalogue (`0…28`); the overlay shows the quadruple + circle count. |
 | `enclosing_x`, `enclosing_y` | Page-space position (mm) of the **enclosing circle** — pan the gasket under the page window. |
 | `enclosing_r` | Enclosing-circle radius (mm). Usually **larger than the page**, so the page is a *crop*; raise to zoom in, lower to see the whole gasket. |
-| `r_min`, `max_depth` | Smallest circle drawn / recursion cap. |
-| `recursion_depth` | Recursively re-pack the **largest** circle (always a root seed, *even if it is cropped by the page*): treat it as the enclosing circle of a fresh packing with the *same* quadruple, and repeat into that sub-packing's largest circle. The sub-packing is clipped to the page like everything else. `0` = off. Only the single largest is recursed (the other large circles stay plain). In `as_eyes` mode an on-page encloser is drawn as a plain outline (its interior holds the sub-packing); a cropped encloser is filled but its outline isn't drawn. |
+| `max_depth` | Recursion-depth cap. The packing floors at `eye_min` (the smallest feature). |
+| `recursion_depth` | Recursively re-pack the **largest** circle (always a root seed, *even if it is cropped by the page*): treat it as the enclosing circle of a fresh packing with the *same* quadruple, and repeat into that sub-packing's largest circle. The sub-packing is clipped to the page like everything else. `0` = off. Only the single largest is recursed (the other large circles stay plain). In `as_eyes` mode an on-page encloser is drawn as a plain outline (its interior holds the sub-packing) unless `draw_enclosing` is off; a cropped encloser is filled but its outline isn't drawn. |
 | `as_eyes` | Preview the crop rendered as gasket eyes (else plain circles). |
-| `save_seed`, `save_name` | Write the crop to `seeds/<save_name>` (boundary = the huge enclosing circle + the 3 root circles) — `sketch_gasket` regenerates the same crop and renders it as eyes. *Captures the base packing only*; for a recursive crop, render it directly here with `as_eyes`. |
+| `draw_enclosing` | Draw the enclosing-circle rim(s): the top-level crop rim **and** the outline of every recursively re-packed encloser. Off = sub-packings sit in unmarked holes. |
+| `min_orifice` | Smallest eye (mm radius, default `8.0`) eligible to be replaced by a tooth-studded **orifice** (`as_eyes` only). |
+| `orifice_prob` | Probability (`0…1`, default `0` = never; rolled per circle from the vsketch seed) that an eligible eye becomes an orifice instead. |
 
 The page is a window: move `enclosing_x/y` and change `enclosing_r` to hunt for an
-appealing region, then save it for `sketch_gasket`.
+appealing region.
 
 **Off-page / infinite-radius anchor.** The anchor may sit far off the page with a huge
 radius to approximate a flat `k=0` boundary: place its *edge* near a page margin (e.g.

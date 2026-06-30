@@ -30,13 +30,15 @@ install_swatches(PENS)
 # The parameter names a sketch must declare to use build_style().  Kept here as
 # documentation / a checklist (veins will extend this).
 EYE_PARAM_NAMES = (
-    "shading_mode eye_big eye_min iris_ratio pupil_ratio size_jitter_sd "
+    "shading_mode eye_big eye_min eye_big_jitter eye_min_jitter "
+    "iris_ratio pupil_ratio size_jitter_sd "
     "offset_mode offset_sd gaze_x gaze_y gaze_strength specular_count "
     "hatch_spacing hatch_angle contour_spacing stipple_density "
     "specular_angle specular_sector_deg specular_inner_ratio specular_reach "
     "iris_sector_deg iris_ring_outer_ratio iris_ring_count iris_ring_taper_deg "
     "tooth_count tooth_depth tooth_width_frac orifice_line_reach "
     "orifice_line_width orifice_lines_per_gap orifice_cross_hatch "
+    "teeth_mode spiral_inner drop_inner drop_outer drop_curve "
     "line_color shade_color"
 ).split()
 
@@ -50,6 +52,7 @@ def build_style(sk, *, frame_style: str = "none") -> Style:
     w, h = (297.0, 210.0) if sk.landscape else (210.0, 297.0)
     return Style(
         eye_big=sk.eye_big, eye_min=sk.eye_min,
+        eye_big_jitter=sk.eye_big_jitter, eye_min_jitter=sk.eye_min_jitter,
         iris_ratio=sk.iris_ratio, pupil_ratio=sk.pupil_ratio,
         size_jitter_sd=sk.size_jitter_sd,
         offset_mode=sk.offset_mode, offset_sd=sk.offset_sd,
@@ -70,6 +73,9 @@ def build_style(sk, *, frame_style: str = "none") -> Style:
         orifice_line_width=sk.orifice_line_width,
         orifice_lines_per_gap=int(sk.orifice_lines_per_gap),
         orifice_cross_hatch=bool(sk.orifice_cross_hatch),
+        teeth_mode=sk.teeth_mode, spiral_inner=sk.spiral_inner,
+        drop_inner=sk.drop_inner, drop_outer=sk.drop_outer,
+        drop_curve=sk.drop_curve,
         stroke_layer=1, fill_layer=2, frame_style=frame_style,
     )
 

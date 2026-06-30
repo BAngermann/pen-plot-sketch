@@ -4,8 +4,7 @@ A finder for visually appealing arrangements: pick an *integral* packing (root
 quadruple), then zoom/pan the enclosing circle relative to the page to frame a
 crop.  The enclosing circle is normally larger than the page, so the page is a
 window onto the gasket - move it around and change ``enclosing_r`` to explore.
-Flip ``save_seed`` to write the current crop to ``seeds/<save_name>`` for use in
-``sketch_gasket``.
+Flip ``as_eyes`` to preview the crop rendered as gasket eyes.
 
     vsk run integral/sketch_integral.py   (from the project root)
 """
@@ -16,18 +15,16 @@ import sys
 import vsketch
 
 _HERE = pathlib.Path(__file__).resolve().parent
-_GASKET = _HERE.parent / "gasket"          # shared library + seed interchange
+_GASKET = _HERE.parent / "gasket"          # shared library
 sys.path.insert(0, str(_GASKET))
-_SEEDS = _GASKET / "seeds"
 
-from config import Config, Seed                            # noqa: E402
 from eyestyle import COLOR_CHOICES, build_style, layer_colors  # noqa: E402
 from features import render_circle                         # noqa: E402
 from geometry import Circle                                # noqa: E402
 from integral import label, place_quadruple, root_quadruples  # noqa: E402
 from packing import a4_clip, pack                          # noqa: E402
-from search import save                                    # noqa: E402
-from style import OFFSET_MODES, SHADING_MODES              # noqa: E402
+from style import (DROP_CURVES, OFFSET_MODES,              # noqa: E402
+                   SHADING_MODES, TEETH_MODES)
 
 QUADS = root_quadruples()
 
@@ -53,7 +50,6 @@ class IntegralSketch(vsketch.SketchClass):
     enclosing_r = vsketch.Param(300.0, min_value=10)      # mm radius (> page = crop)
 
     # --- packing detail
-    r_min = vsketch.Param(2.0, min_value=0.3, decimals=2)  # mm, smallest circle
     max_depth = vsketch.Param(60, min_value=1)
     # Recursively re-pack the largest circle: treat it as the enclosing circle of
     # a fresh packing with the SAME quadruple, and repeat into that sub-packing's
@@ -65,16 +61,18 @@ class IntegralSketch(vsketch.SketchClass):
     as_eyes = vsketch.Param(False)                        # preview as gasket eyes
     draw_enclosing = vsketch.Param(True)                  # show the enclosing rim
 
-    # --- save the crop as a seed config for sketch_gasket
-    save_seed = vsketch.Param(False)
-    save_name = vsketch.Param("integral_crop.json")
-
     # --- eye-shading options (only used when as_eyes; declared explicitly because
     # vsketch reads each sketch class's own Params).  Values are mapped to a Style
     # by eyestyle.build_style; keep the set in sync with sketch_gasket.
     shading_mode = vsketch.Param("hatch", choices=SHADING_MODES)
     eye_big = vsketch.Param(9.0, min_value=1.0, decimals=1)   # mm
     eye_min = vsketch.Param(3.5, min_value=0.5, decimals=1)   # mm
+    eye_big_jitter = vsketch.Param(0.0, min_value=0.0, decimals=1)  # mm, full width
+    eye_min_jitter = vsketch.Param(0.0, min_value=0.0, decimals=1)  # mm, full width
+    # Orifice substitution: an eye with r >= min_orifice is replaced by a
+    # tooth-studded orifice with probability orifice_prob (rolled per circle).
+    min_orifice = vsketch.Param(8.0, min_value=0.5, decimals=1)     # mm
+    orifice_prob = vsketch.Param(0.0, min_value=0.0, max_value=1.0, decimals=2)
     iris_ratio = vsketch.Param(0.62, min_value=0.1, max_value=0.95, decimals=2)
     pupil_ratio = vsketch.Param(0.36, min_value=0.05, max_value=0.9, decimals=2)
     size_jitter_sd = vsketch.Param(0.05, min_value=0.0, max_value=0.3, decimals=3)
@@ -103,6 +101,11 @@ class IntegralSketch(vsketch.SketchClass):
     orifice_line_width = vsketch.Param(0.035, min_value=0.005, max_value=0.2, decimals=3)
     orifice_lines_per_gap = vsketch.Param(2, min_value=0, max_value=8)
     orifice_cross_hatch = vsketch.Param(True)
+    teeth_mode = vsketch.Param("ring", choices=TEETH_MODES)
+    spiral_inner = vsketch.Param(0.18, min_value=0.0, max_value=0.95, decimals=2)
+    drop_inner = vsketch.Param(0.92, min_value=0.0, max_value=1.0, decimals=2)
+    drop_outer = vsketch.Param(0.05, min_value=0.0, max_value=1.0, decimals=2)
+    drop_curve = vsketch.Param("linear", choices=DROP_CURVES)
     line_color = vsketch.Param("none", choices=COLOR_CHOICES)
     shade_color = vsketch.Param("none", choices=COLOR_CHOICES)
 
@@ -123,32 +126,35 @@ class IntegralSketch(vsketch.SketchClass):
 
         outer = xf(c0)
         seeds = [xf(c1), xf(c2), xf(c3)]
-        circles = pack(seeds, outer, clip, r_min=self.r_min,
+        # Pack a half-jitter below eye_min so the vein cutoff has circles on both
+        # sides of its jittered line (otherwise the jitter only ever removes eyes).
+        r_floor = max(0.1, self.eye_min - 0.5 * self.eye_min_jitter)
+        circles = pack(seeds, outer, clip, r_min=r_floor,
                        max_depth=int(self.max_depth))
         return outer, seeds, circles
 
     def _build(self, clip):
         """Pack the crop, optionally recursing into the largest circle.
 
-        Returns ``(base_outer, base_seeds, items)`` where ``items`` is a list of
+        Returns ``(base_outer, items)`` where ``items`` is a list of
         ``(circle, is_encloser)``; an *encloser* is a largest circle that was
         re-packed (drawn as a plain outline rather than an eye, since its interior
         holds the sub-packing)."""
         enc_z = complex(self.enclosing_x, self.enclosing_y)
         enc_r = self.enclosing_r
         depth = int(self.recursion_depth)
-        base_outer = base_seeds = None
+        base_outer = None
         items: list[tuple[Circle, bool]] = []
 
         for level in range(depth + 1):
             outer, seeds, circles = self._pack_in(enc_z, enc_r, clip)
             if level == 0:
-                base_outer, base_seeds = outer, seeds
+                base_outer = outer
             # The largest circle of a packing is always a root seed - which may be
             # cropped by the page.  Recurse into it anyway (filling whatever part
             # falls on the page); the sub-packing is itself clipped to the page.
             largest = max(seeds, key=lambda c: c.r)
-            recurse = (level < depth and largest.r >= 2 * self.r_min
+            recurse = (level < depth and largest.r >= 2 * self.eye_min
                        and _touches_clip(largest, clip))
             # `c is largest` marks the encloser only when it is actually drawn
             # (i.e. fully on the page); a cropped encloser is filled but not drawn.
@@ -156,7 +162,7 @@ class IntegralSketch(vsketch.SketchClass):
             if not recurse:
                 break
             enc_z, enc_r = largest.z, largest.r
-        return base_outer, base_seeds, items
+        return base_outer, items
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         vsk.size("a4", landscape=self.landscape, center=False)
@@ -164,7 +170,7 @@ class IntegralSketch(vsketch.SketchClass):
         vsk.scale("mm")
 
         clip = a4_clip(margin=self.margin, landscape=self.landscape)
-        outer, seeds, items = self._build(clip)
+        outer, items = self._build(clip)
 
         # layer 4: enclosing rim (if it crosses the page) + margin frame
         vsk.stroke(4)
@@ -174,14 +180,21 @@ class IntegralSketch(vsketch.SketchClass):
 
         # layer 1 (+2): the crop.  An "encloser" (a largest circle that was
         # re-packed) is drawn as a plain outline - its interior holds the
-        # sub-packing - rather than as a full eye.
+        # sub-packing - rather than as a full eye, and `draw_enclosing` suppresses
+        # that outline just like it does the top-level rim.
         if self.as_eyes:
             style = build_style(self)
             for c, is_enc in items:
                 if is_enc:
-                    vsk.stroke(1)
-                    vsk.circle(c.z.real, c.z.imag, radius=c.r)
+                    if self.draw_enclosing:
+                        vsk.stroke(1)
+                        vsk.circle(c.z.real, c.z.imag, radius=c.r)
                 else:
+                    # Roll a big-enough eye into a tooth-studded orifice; the
+                    # "orifice" tag then wins in style.feature_for.
+                    if self.orifice_prob > 0.0 and c.r >= self.min_orifice \
+                            and vsk.random(0, 1) < self.orifice_prob:
+                        c.feature = "orifice"
                     render_circle(vsk, c, style)
         else:
             vsk.stroke(1)
@@ -202,26 +215,6 @@ class IntegralSketch(vsketch.SketchClass):
         eye_colors = layer_colors(self) if self.as_eyes else \
             "color --layer 1 black color --layer 2 #888888"
         vsk.vpype(eye_colors + " color --layer 4 #cccccc color --layer 5 black")
-
-        if self.save_seed:
-            self._save(clip, outer, seeds)
-
-    def _save(self, clip, outer: Circle, seeds) -> None:
-        name = self.save_name if self.save_name.endswith(".json") \
-            else self.save_name + ".json"
-        out = _SEEDS / name
-        b = Seed("outer", outer.z, outer.r, True, "boundary")
-        sd = [Seed(f"s{i}", c.z, c.r, True, "eye") for i, c in enumerate(seeds)]
-        ids = [s.id for s in sd]
-        # the root quadruple is fully mutually tangent
-        tang = [(ids[0], ids[1]), (ids[0], ids[2]), (ids[1], ids[2])]
-        tang += [(i, "outer") for i in ids]
-        cfg = Config(clip=clip, boundary=b, seeds=sd, tangencies=tang,
-                     search={"free_ids": [], "r_min": self.r_min,
-                             "max_gen_in_objective": int(self.max_depth)},
-                     landscape=self.landscape)
-        save(cfg, list(seeds), out)
-        print(f"saved crop -> {out}")
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("linemerge linesimplify reloop linesort")

@@ -76,7 +76,7 @@ def _shade_region(vsk, region: sg.Polygon, *, center: complex, radius: float,
     mode = style.shading_mode
     layer = style.fill_layer
 
-    # "ringed" is an eye-specific style; for generic regions (tissue / orifice
+    # "ringed" is an eye-specific style; for generic regions (simple-eye / orifice
     # throats) it falls back to plain hatch so the series stays coherent.
     if mode in ("hatch", "ringed"):
         draw_geometry(vsk, fill_polygon(region, FillSpec(
@@ -172,10 +172,13 @@ def _eye_ringed(vsk, c: Circle, style: Style) -> None:
     """Manga eye: hatched pupil with a negative-space sector specular, and a
     wider sector of concentric arc-rings shading part of the iris."""
     z, r = c.z, c.r
-    pr = r * style.pupil_ratio * _size_mult(vsk, style)
-    iris_mult = _size_mult(vsk, style)
-    iris_outer = r * style.iris_ring_outer_ratio * iris_mult
-    ze = z + _offset(vsk, style, z, r, r - iris_outer)   # iris+pupil group offset
+    # Pupil and iris are jittered independently; clamp each inside the sclera and
+    # base the offset room on whichever is larger, so the pupil never pokes past
+    # the sclera even when the two size-jitters diverge.
+    pr = min(r * style.pupil_ratio * _size_mult(vsk, style), 0.95 * r)
+    iris_outer = min(r * style.iris_ring_outer_ratio * _size_mult(vsk, style),
+                     0.95 * r)
+    ze = z + _offset(vsk, style, z, r, r - max(pr, iris_outer))
     a = math.radians(style.specular_angle)
     half_spec = math.radians(style.specular_sector_deg) / 2
     half_iris = math.radians(style.iris_sector_deg) / 2
@@ -238,18 +241,21 @@ def eye(vsk, c: Circle, style: Style) -> None:
     z, r = c.z, c.r
     vsk.stroke(style.stroke_layer)
     vsk.circle(z.real, z.imag, radius=r)                       # sclera (centred)
-    ir = r * style.iris_ratio * _size_mult(vsk, style)
-    pr = r * style.pupil_ratio * _size_mult(vsk, style)
+    # clamp each inside the sclera; offset room uses the larger so the pupil
+    # (jittered independently of the iris) never pokes past the sclera.
+    ir = min(r * style.iris_ratio * _size_mult(vsk, style), 0.95 * r)
+    pr = min(r * style.pupil_ratio * _size_mult(vsk, style), 0.95 * r)
 
-    ze = z + _offset(vsk, style, z, r, r - ir)                 # iris+pupil group
+    ze = z + _offset(vsk, style, z, r, r - max(ir, pr))        # iris+pupil group
     vsk.circle(ze.real, ze.imag, radius=ir)                    # iris ring
     specs = _speculars(ze, pr, style)
     pupil = _disk(ze, pr).difference(unary_union(specs))
     _shade_region(vsk, pupil, center=ze, radius=pr, style=style)
 
 
-def tissue(vsk, c: Circle, style: Style) -> None:
-    """Bulging tissue: the circle outline + a small specular dot left blank."""
+def simple_eye(vsk, c: Circle, style: Style) -> None:
+    """A simpler eye for mid-size circles: just the outline + a shaded fill with a
+    single negative-space specular dot (no iris/pupil structure)."""
     z, r = c.z, c.r
     vsk.stroke(style.stroke_layer)
     vsk.circle(z.real, z.imag, radius=r)
@@ -261,18 +267,31 @@ def tissue(vsk, c: Circle, style: Style) -> None:
     _shade_region(vsk, region, center=z, radius=r, style=style)
 
 
-def orifice(vsk, c: Circle, style: Style) -> None:
-    """Tooth-studded orifice: a solid dark disc whose **teeth** and irregular
-    **radial streaks** are negative space (paper) carved out of the fill, so the
-    pale teeth read in stark contrast to the dark background."""
-    z, r = c.z, c.r
+# Golden-angle phyllotaxis (sunflower) constant + the per-orifice tooth-count
+# pool.  These Fibonacci counts are well below a real sunflower head (which runs
+# into the hundreds) but still resolve clear spiral arms: 34->8/13, 55->13,
+# 89->21, 144->21/34 visible parastichies.  Capped at 144 so the teeth stay big
+# enough to pen-plot.
+_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+FIB_TEETH = (34, 55, 89, 144)
+
+
+def _drop_curve(mode: str, t: float) -> float:
+    """Map normalized radius ``t`` in [0,1] through the chosen easing -> [0,1]."""
+    t = min(1.0, max(0.0, t))
+    if mode == "sqrt":
+        return math.sqrt(t)
+    if mode == "square":
+        return t * t
+    return t
+
+
+def _ring_teeth(vsk, style: Style, z: complex, r: float) -> list:
+    """A single rim row of inward-pointing triangular teeth (negative space)."""
     n = max(3, int(style.tooth_count))
-
-    teeth = []
-
-    # Teeth: inward-pointing triangles around the rim, left blank (negative space).
     slot = 2 * math.pi / n
     half = slot * style.tooth_width_frac / 2
+    teeth = []
     for i in range(n):
         ac = slot * (i + vsk.random(-0.12, 0.12))        # jittered centre angle
         hw = half * vsk.random(0.7, 1.2)
@@ -284,27 +303,84 @@ def orifice(vsk, c: Circle, style: Style) -> None:
         tip = z + tip_r * complex(math.cos(ta), math.sin(ta))
         teeth.append(sg.Polygon([(b1.real, b1.imag), (tip.real, tip.imag),
                                  (b2.real, b2.imag)]))
+    return teeth
+
+
+def _spiral_teeth(vsk, style: Style, z: complex, r: float) -> list:
+    """Sunflower phyllotaxis: teeth on a golden-angle lattice of a random
+    Fibonacci size.  No teeth inside ``spiral_inner``*r; outward of there each
+    lattice site keeps a tooth with probability ``1 - drop``, where ``drop``
+    eases from ``drop_inner`` (near the hole) to ``drop_outer`` (at the rim)."""
+    n = FIB_TEETH[min(len(FIB_TEETH) - 1, int(vsk.random(0, len(FIB_TEETH))))]
+    rot = vsk.random(0, 2 * math.pi)                      # random arm phase
+    r_in = max(0.0, min(0.95, style.spiral_inner)) * r
+    r_out = 0.97 * r
+    scale = r_out / math.sqrt(n)                          # rho_k = scale*sqrt(k)
+    span = max(1e-6, r_out - r_in)
+    p_in = min(1.0, max(0.0, style.drop_inner))
+    p_out = min(1.0, max(0.0, style.drop_outer))
+    spacing = r * math.sqrt(math.pi / n)                  # ~ uniform site spacing
+    teeth = []
+    for k in range(1, n + 1):
+        rho = scale * math.sqrt(k)
+        if rho < r_in:
+            continue
+        t = (rho - r_in) / span
+        drop = p_in + (p_out - p_in) * _drop_curve(style.drop_curve, t)
+        if vsk.random(0, 1) < drop:
+            continue                                      # this tooth is lost
+        a = k * _GOLDEN_ANGLE + rot
+        radial = complex(math.cos(a), math.sin(a))
+        tang = complex(-radial.imag, radial.real)
+        length = spacing * vsk.random(0.7, 1.05)
+        hw = spacing * 0.32 * vsk.random(0.7, 1.2)
+        ctr = z + rho * radial
+        tip = ctr - radial * (length * 0.5)               # inward-pointing tip
+        b1 = ctr + radial * (length * 0.5) + tang * hw
+        b2 = ctr + radial * (length * 0.5) - tang * hw
+        teeth.append(sg.Polygon([(b1.real, b1.imag), (tip.real, tip.imag),
+                                 (b2.real, b2.imag)]))
+    return teeth
+
+
+def orifice(vsk, c: Circle, style: Style) -> None:
+    """Tooth-studded orifice: a solid dark disc whose **teeth** and irregular
+    **radial streaks** are negative space (paper) carved out of the fill, so the
+    pale teeth read in stark contrast to the dark background.
+
+    ``teeth_mode`` chooses a single rim row (``ring``) or a sunflower
+    phyllotaxis (``spiral``)."""
+    z, r = c.z, c.r
+    n = max(3, int(style.tooth_count))
+
+    if style.teeth_mode == "spiral":
+        teeth = _spiral_teeth(vsk, style, z, r)
+    else:
+        teeth = _ring_teeth(vsk, style, z, r)
 
     holes = list(teeth)
 
-    # Irregular white streaks: placed at *random* angles around the rim (not one
-    # per gap) so the maw reads as uneven folds rather than a regular sunburst.
-    # Each runs from near the rim inward to about `orifice_line_reach`*r, with
-    # random start/end, varying width, and a tilt.
-    maxw = style.orifice_line_width * r
-    n_streaks = int(round(n * max(0, style.orifice_lines_per_gap) * 0.55))
-    for _ in range(n_streaks):
-        a0 = vsk.random(0, 2 * math.pi)
-        a1 = a0 + slot * vsk.random(-0.5, 0.5)           # inner end tilts away
-        r0 = r * vsk.random(0.84, 0.99)                  # start near the rim
-        r1 = r * style.orifice_line_reach * vsk.random(0.55, 1.4)  # ~1/3 r, varied
-        if r0 - r1 < 0.12 * r:
-            continue
-        p0 = z + r0 * complex(math.cos(a0), math.sin(a0))
-        p1 = z + r1 * complex(math.cos(a1), math.sin(a1))
-        w0 = maxw * vsk.random(0.45, 1.0)
-        w1 = maxw * vsk.random(0.0, 0.35)                # taper toward the centre
-        holes.append(_strip(p0, p1, w0, w1))
+    # Irregular white streaks (ring mode only - the spiral lattice is already the
+    # pattern): placed at *random* angles around the rim (not one per gap) so the
+    # maw reads as uneven folds rather than a regular sunburst.  Each runs from
+    # near the rim inward to about `orifice_line_reach`*r, with random start/end,
+    # varying width, and a tilt.
+    if style.teeth_mode != "spiral":
+        slot = 2 * math.pi / n
+        maxw = style.orifice_line_width * r
+        n_streaks = int(round(n * max(0, style.orifice_lines_per_gap) * 0.55))
+        for _ in range(n_streaks):
+            a0 = vsk.random(0, 2 * math.pi)
+            a1 = a0 + slot * vsk.random(-0.5, 0.5)           # inner end tilts away
+            r0 = r * vsk.random(0.84, 0.99)                  # start near the rim
+            r1 = r * style.orifice_line_reach * vsk.random(0.55, 1.4)  # ~1/3 r
+            if r0 - r1 < 0.12 * r:
+                continue
+            p0 = z + r0 * complex(math.cos(a0), math.sin(a0))
+            p1 = z + r1 * complex(math.cos(a1), math.sin(a1))
+            w0 = maxw * vsk.random(0.45, 1.0)
+            w1 = maxw * vsk.random(0.0, 0.35)                # taper toward centre
+            holes.append(_strip(p0, p1, w0, w1))
 
     # Solid dark disc minus the negative-space holes; cross-hatch reads as black.
     region = _disk(z, r).difference(unary_union(holes))
@@ -323,11 +399,20 @@ def orifice(vsk, c: Circle, style: Style) -> None:
     vsk.circle(z.real, z.imag, radius=r)
 
 
+def _jit(vsk, width: float) -> float:
+    """A per-circle uniform offset in [-width/2, width/2] (0 when width<=0)."""
+    return vsk.random(-0.5 * width, 0.5 * width) if width > 0.0 else 0.0
+
+
 def render_circle(vsk, c: Circle, style: Style) -> None:
-    feature = style.feature_for(c.r, c.feature)
+    feature = style.feature_for(c.r, c.feature,
+                                big_jit=_jit(vsk, style.eye_big_jitter),
+                                min_jit=_jit(vsk, style.eye_min_jitter))
     if feature == "orifice":
         orifice(vsk, c, style)
-    elif feature == "tissue":
-        tissue(vsk, c, style)
+    elif feature == "simple_eye":
+        simple_eye(vsk, c, style)
+    elif feature == "vein":
+        pass                      # interstitial veins not implemented yet
     else:
         eye(vsk, c, style)

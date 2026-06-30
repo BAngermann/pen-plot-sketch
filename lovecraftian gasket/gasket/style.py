@@ -13,14 +13,25 @@ from dataclasses import dataclass
 SHADING_MODES = ["hatch", "stipple", "contour", "ringed"]
 FRAME_STYLES = ["none", "circle", "rect", "circle+rect"]
 OFFSET_MODES = ["random", "gaze"]
+TEETH_MODES = ["ring", "spiral"]          # orifice tooth layout
+DROP_CURVES = ["linear", "sqrt", "square"]  # tooth-loss probability falloff
 
 
 @dataclass
 class Style:
-    # --- feature-mapping thresholds (mm radius); reasonable defaults, tune later
-    eye_big: float = 9.0        # r >= this -> full manga eye
-    eye_min: float = 3.5        # r in [eye_min, eye_big) -> small eye
-    #                              r < eye_min -> bulging tissue
+    # --- feature mapping (mm radius).  Two eye renderers split by size:
+    #   r >= eye_big           -> elaborate eye   (eye(): iris rings, speculars...)
+    #   eye_min <= r < eye_big -> simple eye      (simple_eye(): plain fill + dot)
+    #   r < eye_min            -> vein            (interstitial; not yet drawn)
+    # The recursion floors at eye_min, so a gasket has no sub-eye_min circles -
+    # that space is reserved for veins.
+    eye_big: float = 9.0
+    eye_min: float = 3.5
+    # Per-circle uniform jitter (mm, full width) on each threshold, so circles
+    # near a cutoff don't all fall the same way - breaks up the over-regular
+    # "every circle of this size is the same feature" banding.  0 = hard cutoff.
+    eye_big_jitter: float = 0.0
+    eye_min_jitter: float = 0.0
     # --- eye proportions (fractions of the packed circle radius)
     iris_ratio: float = 0.62
     pupil_ratio: float = 0.36
@@ -67,23 +78,33 @@ class Style:
     orifice_line_width: float = 0.035  # max streak width (fraction of r)
     orifice_lines_per_gap: int = 2    # white streaks per inter-tooth gap
     orifice_cross_hatch: bool = True  # cross-hatch the fill so it reads stark/dark
+    # --- teeth layout: "ring" (a single rim row, uses tooth_count) or "spiral"
+    # (sunflower phyllotaxis - teeth on a golden-angle lattice whose count is a
+    # random Fibonacci number per orifice, giving recognizable spiral arms).
+    teeth_mode: str = "ring"
+    spiral_inner: float = 0.18    # spiral: no teeth inside this fraction of r
+    drop_inner: float = 0.92      # spiral: tooth-loss probability at spiral_inner (~1)
+    drop_outer: float = 0.05      # spiral: tooth-loss probability at the rim (~0)
+    drop_curve: str = "linear"    # spiral: drop-prob falloff inner->outer
 
     # --- layers / weights
     stroke_layer: int = 1        # line work (sclera, iris, teeth, rings)
-    fill_layer: int = 2          # dark shading (pupil, orifice interior, tissue)
+    fill_layer: int = 2          # dark shading (pupil, orifice interior, simple eye)
 
     # --- frame
     frame_style: str = "circle"  # none | circle | rect | circle+rect
 
-    def feature_for(self, radius: float, tag: str = "") -> str:
-        """Map a circle to a feature.  An explicit seed ``tag`` wins."""
-        if tag in ("orifice", "eye", "tissue"):
-            # honour deliberate tags, but a tagged eye too small to read becomes tissue
-            if tag == "eye" and radius < self.eye_min:
-                return "tissue"
-            return tag
-        if radius >= self.eye_big:
-            return "eye"
-        if radius >= self.eye_min:
-            return "eye"          # small eye uses the same renderer, scaled
-        return "tissue"
+    def feature_for(self, radius: float, tag: str = "",
+                    big_jit: float = 0.0, min_jit: float = 0.0) -> str:
+        """Map a circle to a feature.  A seed ``tag`` of "orifice" wins; otherwise
+        size decides: ``>= eye_big`` elaborate ``eye``, ``>= eye_min`` ``simple_eye``,
+        else a ``vein`` (interstitial filler, not yet implemented so not drawn).
+
+        ``big_jit``/``min_jit`` are signed per-circle offsets added to the two
+        thresholds (drawn from ``eye_*_jitter`` by the caller) so the cutoff is
+        soft rather than a hard radius line."""
+        if tag == "orifice":
+            return "orifice"
+        if radius < self.eye_min + min_jit:
+            return "vein"
+        return "eye" if radius >= self.eye_big + big_jit else "simple_eye"

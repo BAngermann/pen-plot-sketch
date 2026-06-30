@@ -3,8 +3,9 @@
 A re-roll explorer for seed arrangements: fix one anchor circle, scatter ``n``
 random circles (Gaussian centre & radius, configurable sd), wire them into a
 tangency graph (Delaunay of the centres, or a star around the anchor), snap to
-tangency, pack, and draw - with the objective score overlaid.  Change
-``random_seed``/sds to explore; flip ``refine`` to run a short CMA-ES (which may
+tangency, pack, and draw - with the objective score overlaid.  Change the
+**seed** (GUI seed field / ``vsk save --seed``) / sds to explore; flip ``refine``
+to run a short CMA-ES (which may
 also nudge the anchor within ``anchor_move`` mm); flip ``save_seed`` to write the
 current arrangement to ``seeds/<save_name>`` for use in ``sketch_gasket``.
 
@@ -71,9 +72,8 @@ class SearchSketch(vsketch.SketchClass):
     anchor_move = vsketch.Param(10.0, min_value=0)       # CMA may move centre +-this
     anchor_r_move = vsketch.Param(10.0, min_value=0)     # ... and radius +-this
 
-    # --- the random circles
+    # --- the random circles (re-rolled by vsketch's seed: GUI seed field / --seed)
     n_circles = vsketch.Param(7, min_value=0, max_value=60)
-    random_seed = vsketch.Param(1)
     center_sd = vsketch.Param(40.0, min_value=1)         # mm, centre spread
     radius_mean = vsketch.Param(28.0, min_value=2)       # mm
     radius_sd = vsketch.Param(9.0, min_value=0)          # mm
@@ -96,13 +96,13 @@ class SearchSketch(vsketch.SketchClass):
     save_seed = vsketch.Param(False)
     save_name = vsketch.Param("searched_explore.json")
 
-    def _build(self):
+    def _build(self, seed: int):
         clip = a4_clip(margin=self.margin, landscape=self.landscape)
         boundary = Seed("outer", complex((clip.x0 + clip.x1) / 2,
                                          (clip.y0 + clip.y1) / 2),
                         self.boundary_r, True, "boundary") \
             if self.use_boundary else None
-        rng = random.Random(int(self.random_seed))
+        rng = random.Random(seed)
         cfg = random_config(
             rng, clip=clip, boundary=boundary, n=int(self.n_circles),
             anchor_z=complex(self.anchor_x, self.anchor_y), anchor_r=self.anchor_r,
@@ -117,7 +117,7 @@ class SearchSketch(vsketch.SketchClass):
             cfg, snapped, terms = run(ref, iters=int(self.refine_iters),
                                       agg=self.agg, weights=weights,
                                       max_gen=int(self.display_depth),
-                                      seed=int(self.random_seed), verbose=False)
+                                      seed=seed, verbose=False)
         else:
             _, terms, snapped = evaluate(cfg, agg=self.agg, weights=weights,
                                          max_gen=int(self.display_depth))
@@ -131,7 +131,9 @@ class SearchSketch(vsketch.SketchClass):
         vsk.penWidth(self.pen_width)
         vsk.scale("mm")
 
-        cfg, snapped, terms = self._build()
+        # Use vsketch's own seed (GUI seed field / `vsk save --seed`) to drive the
+        # random arrangement and the CMA-ES refine.
+        cfg, snapped, terms = self._build(vsk.random_seed)
         clip = cfg.clip
         outer = cfg.outer_circle()
         circles = pack(snapped, outer, clip, r_min=self.r_min,
