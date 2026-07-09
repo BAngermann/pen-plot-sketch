@@ -6,8 +6,8 @@ negative-space specular highlights), **tooth-studded orifices**, and a simpler e
 are planned for the gaps below). Several **shading variants** (hatch / stipple / contour / ringed) share
 one packing so they read as a coherent series.
 
-See [`../lovecraftian_apollonian_plan.md`](../lovecraftian_apollonian_plan.md) for the
-full design rationale.
+See [`../README.md`](../README.md) for the project overview, how the three sketches relate,
+and the design rationale.
 
 ## Folder layout
 
@@ -23,9 +23,9 @@ lovecraftian gasket/
   integral/    # sketch_integral.py + its config/
 ```
 
-`search/` and `integral/` bootstrap `../gasket` onto `sys.path` and read/write seeds in
-`../gasket/seeds`, so a crop/arrangement saved in either appears in `sketch_gasket`'s
-`seed_file` dropdown.
+`search/` and `integral/` bootstrap `../gasket` onto `sys.path` to reuse the library.
+`search/` also writes arrangements to `../gasket/seeds`, so a saved arrangement appears in
+`sketch_gasket`'s `seed_file` dropdown; `integral/` renders its crops directly.
 
 ## Running
 
@@ -305,7 +305,7 @@ primitives (29 in all, each Descartes-validated and placed tangent).
 
 | Param | Meaning |
 |-------|---------|
-| `packing_index` | Browse the catalogue (`0…28`); the overlay shows the quadruple + circle count. |
+| `packing_index` | Browse the catalogue (`0…28`); the quadruple + circle count are printed to the console. |
 | `enclosing_x`, `enclosing_y` | Page-space position (mm) of the **enclosing circle** — pan the gasket under the page window. |
 | `enclosing_r` | Enclosing-circle radius (mm). Usually **larger than the page**, so the page is a *crop*; raise to zoom in, lower to see the whole gasket. |
 | `max_depth` | Recursion-depth cap. The packing floors at `eye_min` (the smallest feature). |

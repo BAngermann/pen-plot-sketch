@@ -172,11 +172,10 @@ class IntegralSketch(vsketch.SketchClass):
         clip = a4_clip(margin=self.margin, landscape=self.landscape)
         outer, items = self._build(clip)
 
-        # layer 4: enclosing rim (if it crosses the page) + margin frame
+        # layer 4: enclosing rim (if it crosses the page)
         vsk.stroke(4)
         if self.draw_enclosing:
             vsk.circle(outer.z.real, outer.z.imag, radius=outer.r)
-        vsk.rect(clip.x0, clip.y0, clip.x1 - clip.x0, clip.y1 - clip.y0)
 
         # layer 1 (+2): the crop.  An "encloser" (a largest circle that was
         # re-packed) is drawn as a plain outline - its interior holds the
@@ -201,20 +200,17 @@ class IntegralSketch(vsketch.SketchClass):
             for c, _ in items:
                 vsk.circle(c.z.real, c.z.imag, radius=c.r)
 
-        # layer 5: overlay
-        vsk.stroke(5)
+        # console-only status line (no on-canvas text)
         q = self._quad()
         rec = f"  rec={int(self.recursion_depth)}" if self.recursion_depth else ""
-        txt = (f"#{int(self.packing_index)}/{len(QUADS) - 1}  {label(q)}  "
-               f"circles={len(items)}  R={self.enclosing_r:.0f}mm{rec}")
-        vsk.text(txt, clip.x0, clip.y0 - 7, size=3.2)
-        print("integral:", txt)
+        print("integral:", f"#{int(self.packing_index)}/{len(QUADS) - 1}  "
+              f"{label(q)}  circles={len(items)}  R={self.enclosing_r:.0f}mm{rec}")
 
-        # eye fills (layers 1/2) get the chosen pen colours; the browser overlay
-        # (rim/frame/text) stays gray/black.
+        # eye fills (layers 1/2) get the chosen pen colours; the enclosing rim
+        # (layer 4) stays gray.
         eye_colors = layer_colors(self) if self.as_eyes else \
             "color --layer 1 black color --layer 2 #888888"
-        vsk.vpype(eye_colors + " color --layer 4 #cccccc color --layer 5 black")
+        vsk.vpype(eye_colors + " color --layer 4 #cccccc")
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:
         vsk.vpype("linemerge linesimplify reloop linesort")
