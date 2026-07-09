@@ -29,8 +29,9 @@ tree so the result is a mix of coherent patches and noise:
 
 - The first `freeze_after_splits` cuts are a warm-up — boxes there are not frozen.
 - After that, each newly created box is **frozen** with probability `freeze_prob`
-  to a random **fill type** — `none` (unfilled), `solid`, `hatch`, or a single
-  glyph — and *all its descendants inherit that type*.
+  to a random **fill type** — `solid`, `hatch`, or a single glyph — and *all its
+  descendants inherit that type*. (`none` is deterministic-only, so random mode
+  never blanks a box.)
 - Within a frozen subtree the type is fixed but the other parameters still vary
   per box (hatch direction, spacing, square/hex/halton grid, glyph angle, size…).
 - Boxes never caught by a freeze get an independent random type.

@@ -73,8 +73,12 @@ class BoxesSketch(vsketch.SketchClass):
     hatch_cross = vsketch.Param(False)
 
     def _fill_types(self):
-        """The freezable fill types: none, solid, hatch, and one per glyph."""
-        return ["none", "solid", "hatch"] + [f"glyph:{g}" for g in GLYPH_TYPES]
+        """The freezable fill types: solid, hatch, and one entry per glyph.
+
+        "none" is intentionally excluded so random/freeze mode never blanks a
+        box; it stays selectable only via the deterministic ``fill_pattern``.
+        """
+        return ["solid", "hatch"] + [f"glyph:{g}" for g in GLYPH_TYPES]
 
     def _split_boxes(self, vsk):
         """Recursive guillotine split.
