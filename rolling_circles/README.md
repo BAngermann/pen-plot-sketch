@@ -46,6 +46,17 @@ with live parameter sliders.
   `num_points` at the last cell, so the grid doubles as a resolution sweep —
   useful for picking the sparsest vertex count that still reads as the
   intended shape.
+- `layer_circles` — draw the shape as a stack of vpype layers, one per prefix
+  of the chain: layer 1 uses only the center circle, layer 2 the first two
+  circles, and so on until the final layer draws the whole chain. Each layer
+  gets a distinct hue, and (by default) all layers share the same theta sweep
+  and scaling so the partial curves stack directly on top of one another.
+- `skip_layers` — when layering, omit the first *k* prefixes (e.g. `2` starts
+  from the three-circle prefix). Clamped so the full chain is always drawn.
+- `per_layer_period` — when layering, give each prefix its own minimal closing
+  sweep instead of sharing the full chain's `theta_max`. Layers still overlay
+  (same scale/origin), but each partial curve is traced once rather than
+  retraced over the full chain's extra revolutions.
 
 ## Explored and discarded
 
