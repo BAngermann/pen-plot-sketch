@@ -24,6 +24,18 @@ from .grids import GRIDS, GRID_TYPES
 from .rng import RandomLike
 
 
+# ── none ───────────────────────────────────────────────────────────────────────
+# An empty fill: renders nothing.  Leaves a shape unfilled (outline only) while
+# still flowing through the same pattern interface as every other fill.
+
+def render_none(poly: Polygon, params: dict, layer: int) -> Geometry:
+    return []
+
+
+def sample_none(rng: RandomLike, overrides: dict) -> dict:
+    return {}
+
+
 # ── solid ──────────────────────────────────────────────────────────────────────
 # vsketch's native fill, wrapped as a pattern so it shares the interface.  It has
 # no parameters; layer any other fill on top of it.
@@ -148,6 +160,7 @@ RenderFn = Callable[[Polygon, dict, int], Geometry]
 SampleFn = Callable[[RandomLike, dict], dict]
 
 PATTERNS: Dict[str, Tuple[RenderFn, SampleFn]] = {
+    "none": (render_none, sample_none),
     "solid": (render_solid, sample_solid),
     "hatch": (render_hatch, sample_hatch),
     "glyph_grid": (render_glyph_grid, sample_glyph_grid),

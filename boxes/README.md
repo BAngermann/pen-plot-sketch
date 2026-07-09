@@ -7,6 +7,9 @@ doubles as the testbed for the [`penfill`](../penfill/) fill library.
 Run with `vsk run` from this directory (the sketch adds the repo root to
 `sys.path` so `penfill` imports cleanly).
 
+See also [`crack`](../crack/) — a solid-fill spin-off of this sketch that adds a
+top-to-bottom crack through the mosaic.
+
 ## How it works
 
 1. **Split.** Starting from one box, repeatedly pop the largest box and cut it
@@ -26,8 +29,8 @@ tree so the result is a mix of coherent patches and noise:
 
 - The first `freeze_after_splits` cuts are a warm-up — boxes there are not frozen.
 - After that, each newly created box is **frozen** with probability `freeze_prob`
-  to a random **fill type** — `solid`, `hatch`, or a single glyph — and *all its
-  descendants inherit that type*.
+  to a random **fill type** — `none` (unfilled), `solid`, `hatch`, or a single
+  glyph — and *all its descendants inherit that type*.
 - Within a frozen subtree the type is fixed but the other parameters still vary
   per box (hatch direction, spacing, square/hex/halton grid, glyph angle, size…).
 - Boxes never caught by a freeze get an independent random type.
@@ -51,8 +54,9 @@ boxes.
 - `split_seed` — seed for the split (0 = varies each run).
 
 ### Fill
-- `fill_pattern` — `solid` (vsketch native fill), `hatch`, or `glyph_grid`.
-  Used only in deterministic mode (ignored when `random_fill` is on).
+- `fill_pattern` — `none` (leave the box empty — outline only), `solid` (vsketch
+  native fill), `hatch`, or `glyph_grid`. Used only in deterministic mode
+  (ignored when `random_fill` is on).
 - `random_fill` — when on, use random/freeze mode; when off, use one fixed spec
   built from the deterministic knobs below.
 - `fill_seed` — seed for fill sampling / glyph jitter (0 = varies each run).

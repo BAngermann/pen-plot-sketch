@@ -73,8 +73,8 @@ class BoxesSketch(vsketch.SketchClass):
     hatch_cross = vsketch.Param(False)
 
     def _fill_types(self):
-        """The freezable fill types: solid, hatch, and one entry per glyph."""
-        return ["solid", "hatch"] + [f"glyph:{g}" for g in GLYPH_TYPES]
+        """The freezable fill types: none, solid, hatch, and one per glyph."""
+        return ["none", "solid", "hatch"] + [f"glyph:{g}" for g in GLYPH_TYPES]
 
     def _split_boxes(self, vsk):
         """Recursive guillotine split.
@@ -160,8 +160,8 @@ class BoxesSketch(vsketch.SketchClass):
         """Build a fill of a given type with the remaining params sampled."""
         lo, hi = max(0.1, 1 - self.spacing_var), 1 + self.spacing_var
         spacing = self.fill_spacing * vsk.random(lo, hi)
-        if fill_type == "solid":
-            return FillSpec("solid", layer, {})
+        if fill_type in ("none", "solid"):
+            return FillSpec(fill_type, layer, {})
         if fill_type == "hatch":
             return sample_fill("hatch", VskRandom(vsk), layer=layer, spacing=spacing)
         glyph = fill_type.split(":", 1)[1]
@@ -181,7 +181,7 @@ class BoxesSketch(vsketch.SketchClass):
 
     def _deterministic_spec(self, layer):
         bases = (self.halton_base_x, self.halton_base_y)
-        if self.fill_pattern == "solid":
+        if self.fill_pattern in ("none", "solid"):
             params = {}
         elif self.fill_pattern == "hatch":
             params = dict(spacing=self.fill_spacing, angle=self.hatch_angle,
