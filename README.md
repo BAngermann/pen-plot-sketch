@@ -14,13 +14,15 @@ column links to a sample render collected in [`reference/`](reference/).
 |---------|--------|-----------|---------------|
 | <a href="reference/boxes.svg"><img src="reference/boxes.svg" width="300"></a> | [boxes](boxes/) | vsketch | Recursively subdivides a rectangle (randomised guillotine split) and fills each box with solid / hatch / glyph patterns. Doubles as the testbed for the `penfill` library. |
 | <a href="reference/crack.svg"><img src="reference/crack.svg" width="300"></a> | [crack](crack/) | vsketch | A solid-fill spin-off of `boxes`: guillotine-split shards coloured per side, with a jagged crack deleted from the top edge to the bottom edge (widening when it runs long). |
+| <a href="reference/epitrochoid.svg"><img src="reference/epitrochoid.svg" width="300"></a> | [epitrochiod](epitrochiod/) | whiskers (Rust) | Spirograph-style epitrochoids/hypotrochoids pushed to extremes: many pen-radius variants overlaid with independent rotation and tiled across a grid, decomposing dense near-solid forms into lighter, emergent shapes. |
 | | [floorplan](floorplan/) | vsketch | Procedurally generated Minoan-ruin mazes, voxelised and eroded into ruins, rendered as isometric pen plots (optionally on a noise terrain). |
 | <a href="reference/Lsys.svg"><img src="reference/Lsys.svg" width="300"></a> | [L-Systems](L-Systems/) | vsketch | Grows L-systems (Lindenmayer systems) from rewrite rules and draws them with a turtle; presets for classic fractals and branching plants. |
 | <a href="reference/lovecraftian%20gasket.svg"><img src="reference/lovecraftian%20gasket.svg" width="300"></a> | [lovecraftian gasket](lovecraftian%20gasket/) | vsketch | Fills an Apollonian circle packing and renders each circle as a manga-style eye or a tooth-studded orifice, with a CMA-ES arrangement search. |
 | <a href="reference/modulo_multiplication.svg"><img src="reference/modulo_multiplication.svg" width="300"></a> | [modulo_multiplication](modulo_multiplication/) | vsketch | Times-table / modular-multiplication chord patterns on a circle (cardioids, roses), plus a comparison grid and a Voronoi-of-intersections variant. |
-| | [rolling_circles](rolling_circles/) | whiskers (Rust) | Traces the curve of a pen on the last of a chain of circles rolling without slipping — epitrochoids generalised from two circles to N. |
+| <a href="reference/rolling_circles.svg"><img src="reference/rolling_circles.svg" width="300"></a> | [rolling_circles](rolling_circles/) | whiskers (Rust) | Traces the curve of a pen on the last of a chain of circles rolling without slipping — epitrochoids generalised from two circles to N. |
 | <a href="reference/tree-rings.svg"><img src="reference/tree-rings.svg" width="300"></a> | [tree-rings](tree-rings/) | whiskers (Rust) | Grows procedural tree-ring cross-sections via Perlin-modulated growth and relaxation, tiled across a squared dissection of the page. |
 | <a href="reference/Takagi.svg"><img src="reference/Takagi.svg" width="300"></a> | [Takagi](Takagi/) | vsketch | Draws the Takagi (blancmange) function and variants, one iteration per layer. |
+| <a href="reference/PenLayerTest.svg"><img src="reference/PenLayerTest.svg" width="300"></a> | [PenLayerTest](PenLayerTest/) | vsketch | Draws a grid of overlapping pen swatches to test how different pens (or colours) layer when plotted. |
 | | [Phonograph](Phonograph/) | — | Planned: turn a `.WAV` into a spiral plot of its waveform to resemble a phonograph record (README only, not yet implemented). |
 
 ## Libraries
@@ -44,12 +46,10 @@ Shared modules used by the sketches above.
 
 Undocumented yet; noted here so they don't get lost.
 
-- **PenLayerTest** — vsketch — pen / layer test sketch.
 - **PlotterTest** — vsketch — plotter test sketch.
 - **Random_Takagi** — vsketch — randomised Takagi variant.
 - **asemic-writing** — whiskers (Rust workspace: `asemic-core`, `glyph-editor`, `word-composer`) — generative asemic glyphs / writing.
 - **complex_dynamics** — whiskers (Rust) — complex-dynamics external/internal rays, laminations, and a PCF finder.
-- **epitrochiod** — whiskers (Rust) — epitrochoid / hypotrochoid curves.
 - **grid** — Rust library — exhaustive squared-square dissection search (used by `tree-rings` for tiling).
 - **pens** — data — shared vpype / DrawingBot pen-config TOMLs consumed via `penfill.load_pens`.
 
