@@ -57,6 +57,18 @@ class Heightfield:
         """Terraced proxy height of cell (i, j) (solid for z < terr_int)."""
         return self._col[i][j]
 
+    def sample_terr_int(self, x: int, y: int) -> int:
+        """Terraced proxy height at *world* fine coords ``(x, y)``.
+
+        Like :meth:`terr_int` but takes world coordinates (subtracts the
+        field's ``ox``/``oy`` origin) and clamps to the field's extent, so it
+        can be sampled for points outside the exact footprint (e.g. a rest
+        height for rubble dropped near the edge of the terrain).
+        """
+        i = min(max(x - self.ox, 0), self.W - 1)
+        j = min(max(y - self.oy, 0), self.H - 1)
+        return self._col[i][j]
+
     def occupied(self, x: int, y: int, z: int) -> bool:
         """Terraced-proxy solidity at fine world coords — for the shadow march."""
         i, j = x - self.ox, y - self.oy

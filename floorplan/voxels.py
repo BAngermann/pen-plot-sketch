@@ -59,20 +59,29 @@ def flood_fill_3d(grid: np.ndarray, seed_z: int, fill_value: int = 2) -> np.ndar
     return out
 
 
+def _floor_at(floor_z, x: int, y: int) -> int:
+    """Resolve a resting floor: a plain scalar, or a per-column (nx, ny) array."""
+    return int(floor_z[x, y]) if isinstance(floor_z, np.ndarray) else int(floor_z)
+
+
 def drop(x: int, y: int, z: int, grid: np.ndarray, floor_z, rng, stop_drop=False) -> np.ndarray:
     """Let a floating voxel fall, then maybe tumble once into an adjacent column.
 
-    ``floor_z`` is the lowest z a voxel may occupy (the first free cell above the
-    floor).  The voxel falls straight down until it rests on a solid cell or on
-    the floor, optionally tumbles once sideways off a ledge, and is always placed
-    (marked ``3``) at a valid resting cell — never below ``floor_z`` and never
-    discarded.
+    ``floor_z`` is the lowest z a voxel may occupy at column ``(x, y)`` (the
+    first free cell above whatever it rests on) — either a scalar used
+    everywhere, or a per-column ``(nx, ny)`` array (e.g. a structural floor
+    where present, terrain height elsewhere; see ``PositionGrid.decay_texture``).
+    The voxel falls straight down until it rests on a solid cell or on that
+    floor, optionally tumbles once sideways off a ledge (re-resolving the floor
+    at the new column), and is always placed (marked ``3``) at a valid resting
+    cell — never below its column's floor and never discarded.
     """
-    if z < floor_z:
-        z = floor_z
+    fz = _floor_at(floor_z, x, y)
+    if z < fz:
+        z = fz
     grid[x, y, z] = 0
-    # Fall straight down to rest on the first solid cell (or the floor).
-    while z > floor_z and grid[x, y, z - 1] == 0:
+    # Fall straight down to rest on the first solid cell (or this column's floor).
+    while z > fz and grid[x, y, z - 1] == 0:
         z -= 1
     # Maybe tumble once into a random adjacent empty cell at the rest level,
     # which then falls and settles in its own column.
@@ -128,40 +137,83 @@ class PositionGrid:
         zs = [p[2] for p in self.all_occupied_positions]
         return [min(xs), max(xs), min(ys), max(ys), min(zs), max(zs)]
 
-    def fromMaze(self, theMaze, room_size=12, wall_thickness=3, wall_height=16, floor_thickness=1):
-        self.stable_z = floor_thickness + 1
-        # First free cell above the floor (floor voxels occupy z in [0, floor_thickness)).
-        # This is where dropped debris should come to rest.
-        self.floor_z = floor_thickness
-        cell_size = room_size + wall_thickness
-        floor_level = 0
+    def _fill_floor_slab(self, theMaze, room_size, wall_thickness, thickness, z0, cells):
+        """Fill a `thickness`-tall floor slab at [z0, z0+thickness) for exactly
+        `cells` (a set of (row,col)), including the inter-cell seam fill
+        between orthogonally adjacent members of `cells` (closes the
+        wall_thickness-wide gap between two cells' own tiles).
 
-        for row in range(theMaze.num_rows):
-            for col in range(theMaze.num_cols):
-                # room floor tiles
-                if theMaze.rooms[row][col] != 0:
+        Each cell's own tile is inset by wall_thickness on its north/west
+        sides (and stops short of its own south/east wall strip too) -- for a
+        *normal* floor slab that's invisible, because a real wall already
+        fills that same footprint at every z from the floor up to its own
+        ceiling. But a slab used as a roof/terrace cap sits *above* where the
+        walls stop, so nothing else fills that boundary strip there -- it
+        must be filled explicitly wherever a cell has no same-region neighbour
+        in a given direction (a true exterior edge of `cells`), or the wall
+        below appears to stop short of the cap sitting on top of it.
+        """
+        cell_size = room_size + wall_thickness
+        for (row, col) in cells:
+            self.fill_box(row * cell_size + wall_thickness, (row + 1) * cell_size,
+                          col * cell_size + wall_thickness, (col + 1) * cell_size,
+                          z0, z0 + thickness)
+            if (row, col + 1) in cells:
+                if (row + 1, col) in cells and (row - 1, col) in cells:
+                    self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                                  (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
+                                  z0, z0 + thickness)
+                else:  # still not quite correct, needs separate cases for either row direction
                     self.fill_box(row * cell_size + wall_thickness, (row + 1) * cell_size,
+                                  (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
+                                  z0, z0 + thickness)
+            if (row + 1, col) in cells:
+                if (row, col + 1) in cells and (row, col - 1) in cells:
+                    self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
+                                  col * cell_size, (col + 1) * cell_size + wall_thickness,
+                                  z0, z0 + thickness)
+                else:  # still not quite correct, needs separate cases for either column direction
+                    self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
                                   col * cell_size + wall_thickness, (col + 1) * cell_size,
-                                  floor_level, floor_level + floor_thickness)
-                    # floor tiles between rooms
-                    if col < theMaze.num_cols - 1 and theMaze.rooms[row][col + 1] != 0:
-                        if row < theMaze.num_rows - 1 and row > 0 and theMaze.rooms[row + 1][col] != 0 and theMaze.rooms[row - 1][col] != 0:
-                            self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
-                                          (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
-                                          floor_level, floor_level + floor_thickness)
-                        else:  # still not quite correct, needs separate cases for either row direction
-                            self.fill_box(row * cell_size + wall_thickness, (row + 1) * cell_size,
-                                          (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
-                                          floor_level, floor_level + floor_thickness)
-                    if row < theMaze.num_rows - 1 and theMaze.rooms[row + 1][col] != 0:
-                        if col < theMaze.num_cols - 1 and col > 0 and theMaze.rooms[row][col + 1] != 0 and theMaze.rooms[row][col - 1] != 0:
-                            self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
-                                          col * cell_size, (col + 1) * cell_size + wall_thickness,
-                                          floor_level, floor_level + floor_thickness)
-                        else:  # still not quite correct, needs separate cases for either column direction
-                            self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
-                                          col * cell_size + wall_thickness, (col + 1) * cell_size,
-                                          floor_level, floor_level + floor_thickness)
+                                  z0, z0 + thickness)
+            # Exterior boundary strips: no same-region neighbour there, so
+            # nothing else (seam fill or wall) would cover this cap slab's own
+            # footprint edge -- fill it directly, generous past the corners
+            # (harmless redundancy in a set) to avoid corner gaps.
+            if (row - 1, col) not in cells:
+                self.fill_box(row * cell_size, row * cell_size + wall_thickness,
+                              col * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + thickness)
+            if (row, col - 1) not in cells:
+                self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                              col * cell_size, col * cell_size + wall_thickness,
+                              z0, z0 + thickness)
+            if (row + 1, col) not in cells:
+                self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
+                              col * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + thickness)
+            if (row, col + 1) not in cells:
+                self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                              (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + thickness)
+
+    def fromMaze(self, theMaze, room_size=12, wall_thickness=3, wall_height=16, floor_thickness=1,
+                 floor_level=0, omit_floor_cells=frozenset(),
+                 roof_stair_state=None, roof_break_height=None):
+        if floor_level == 0:
+            self.stable_z = floor_thickness + 1
+            # First free cell above the floor (floor voxels occupy z in [0, floor_thickness)).
+            # This is where dropped debris should come to rest.
+            self.floor_z = floor_thickness
+        cell_size = room_size + wall_thickness
+
+        floor_cells = theMaze.footprint_cells() - set(omit_floor_cells)
+        if floor_level > 0:
+            # A light shaft never gets a floor slab on any floor above the one
+            # it originates on -- it stays an open vertical void up to the roof.
+            floor_cells -= {(r, c) for r in range(theMaze.num_rows) for c in range(theMaze.num_cols)
+                            if 9 <= theMaze.rooms[r][c] <= 12}
+        self._fill_floor_slab(theMaze, room_size, wall_thickness, floor_thickness, floor_level, floor_cells)
         # walls
         for row in range(theMaze.num_rows + 1):
             for col in range(theMaze.num_cols):
@@ -200,7 +252,10 @@ class PositionGrid:
                     flights[room_type].append((row, col))
         for type, cells in flights.items():
             rows, cols = zip(*cells)
-            max_height = floor_level + floor_thickness + wall_height
+            if roof_stair_state is not None and type == roof_stair_state:
+                max_height = roof_break_height   # punch through the roof cap
+            else:
+                max_height = floor_level + floor_thickness + wall_height
             match type // 20:
                 case 1:  # stairs leading up north
                     start_row = max(rows)
@@ -419,7 +474,7 @@ class PositionGrid:
         self.all_occupied_positions -= discard
 
     def decay_texture(self, reps, rng, noise_fn, *, noise_influence=6.5,
-                      noise_offset=-0.4, neighbor_baseline=-9):
+                      noise_offset=-0.4, neighbor_baseline=-9, terrain_z=None):
         """Logistic, noise-modulated erosion for ``reps`` rounds (vectorised).
 
         Each round, a voxel survives with probability ``sigmoid(baseline +
@@ -430,6 +485,15 @@ class PositionGrid:
         ``rng`` is a NumPy ``Generator`` (``np.random.default_rng(seed)``) and
         ``noise_fn(x, y) -> float`` is the (deterministic) spatial noise; both
         keep the result reproducible per seed.
+
+        ``terrain_z(x, y) -> float``, if given, is the ground rest height for
+        column ``(x, y)`` (in this grid's own integer coordinates). Rubble in a
+        column with no structural floor beneath it (no solid within
+        ``[0, floor_z)``) rests on ``terrain_z`` instead of falling all the way
+        to the (otherwise flat) ``floor_z`` — e.g. debris tumbling outside the
+        building footprint lands on the surrounding terrain rather than floating
+        above or sinking below it. Columns that do have a structural floor are
+        unaffected and keep resting on it.
         """
         if reps <= 0 or not self.all_occupied_positions:
             return
@@ -449,6 +513,12 @@ class PositionGrid:
         z_above_floor_base = np.arange(nz) > 0
         scalar = lambda: float(rng.random())   # scalar draw for drop()
 
+        # Sample the (static) terrain resting height once, up front.
+        terrain_arr = None
+        if terrain_z is not None:
+            terrain_arr = np.array([[terrain_z(x, y) for y in range(ny)] for x in range(nx)])
+            terrain_arr = np.clip(np.round(terrain_arr), 0, nz - 1).astype(int)
+
         for _ in range(reps):
             occf = occ.astype(np.float64)
             neighbors = ndimage.correlate(occf, _NEIGHBOR_KERNEL, mode="constant", cval=0.0)
@@ -462,12 +532,128 @@ class PositionGrid:
             floating = occ2 & ~kept
             cand = (removed | floating) & z_above_floor_base[None, None, :]
 
+            # Per-column resting floor: the structural floor where one exists
+            # (unchanged behaviour), else the terrain (when provided).
+            if terrain_arr is not None:
+                has_floor = kept[:, :, : self.floor_z].any(axis=2) if self.floor_z > 0 \
+                    else np.zeros((nx, ny), dtype=bool)
+                column_floor = np.where(has_floor, self.floor_z, terrain_arr)
+            else:
+                column_floor = self.floor_z   # scalar: identical to the old behaviour
+
             grid = kept.astype(np.int8)
             cells = np.argwhere(cand)
             for x, y, z in cells[np.argsort(cells[:, 2])]:   # settle bottom-up
-                if scalar() < 0.7 and z > self.floor_z:
-                    drop(int(x), int(y), int(z), grid, self.floor_z, scalar)
+                fz = _floor_at(column_floor, x, y)
+                if scalar() < 0.7 and z > fz:
+                    drop(int(x), int(y), int(z), grid, column_floor, scalar)
             occ = grid > 0
 
         self.all_occupied_positions = {
             (int(x), int(y), int(z)) for x, y, z in np.argwhere(occ)}
+
+    def fromBuilding(self, building, room_size=12, wall_thickness=3, wall_height=16,
+                     floor_thickness=1, ground_floor_thickness=None,
+                     parapet_height=None, roof_thickness=None):
+        """Voxelise every floor of a maze.Building into one combined occupancy
+        set, stacking each floor directly on top of the previous one's own
+        ceiling, and omitting each upper floor's own stair-landing cell from
+        its own floor slab -- that omission is the literal hole the stairs
+        below rise into (fromMaze's roof_stair_state/roof_break_height punch
+        the flight itself up through what would otherwise be its ceiling).
+        Roof capping and the ground-floor roof terrace + parapet are added
+        after the floor loop (see PositionGrid._cap_roof).
+
+        `ground_floor_thickness` (default: same as `floor_thickness`) lets the
+        ground floor's own slab be a different thickness than every floor
+        above it and the roof/terrace cap -- e.g. a thick stone foundation
+        slab under a thinner wooden upper floor/roof."""
+        roof_thickness = floor_thickness if roof_thickness is None else roof_thickness
+        ground_floor_thickness = floor_thickness if ground_floor_thickness is None else ground_floor_thickness
+
+        # Per-floor slab thickness: only the ground floor can differ: every
+        # floor above it, and the roof/terrace cap, always use floor_thickness.
+        thicknesses = [ground_floor_thickness] + [floor_thickness] * (len(building.floors) - 1)
+        floor_levels = []
+        z = 0
+        for t in thicknesses:
+            floor_levels.append(z)
+            z += t + wall_height
+
+        for i, maze in enumerate(building.floors):
+            floor_level = floor_levels[i]
+            this_thickness = thicknesses[i]
+            omit = set()
+            if i > 0:
+                for link in building.stair_links:
+                    if link['to_floor'] == i:
+                        omit.add(link['landing'])
+            is_roof_floor = (i == building.roof_floor_index)
+            roof_stair_state = building.roof_stair_state if is_roof_floor else None
+            # Genuine headroom above the roof cap's own top surface (not just
+            # up to the normal ceiling) so the flight actually pokes through
+            # the cap instead of merely reaching it.
+            roof_top = floor_level + this_thickness + wall_height + roof_thickness
+            roof_break_height = (roof_top + wall_height) if roof_stair_state else None
+            self.fromMaze(maze, room_size=room_size, wall_thickness=wall_thickness,
+                          wall_height=wall_height, floor_thickness=this_thickness,
+                          floor_level=floor_level, omit_floor_cells=omit,
+                          roof_stair_state=roof_stair_state, roof_break_height=roof_break_height)
+
+        self._cap_roof(building, room_size, wall_thickness, wall_height, floor_thickness,
+                       parapet_height, roof_thickness, floor_levels, thicknesses)
+
+    def _cap_roof(self, building, room_size, wall_thickness, wall_height, floor_thickness,
+                  parapet_height, roof_thickness, floor_levels, thicknesses):
+        """Cap the topmost floor's footprint (minus its own light shafts --
+        they stay open to the sky -- and any roof-access opening) with a roof
+        slab, and if a 2nd floor exists, also cap whatever part of the ground
+        floor's roof it does NOT cover as an accessible terrace, surrounded by
+        a parapet. `floor_levels`/`thicknesses` are per-floor (see
+        fromBuilding), since the ground floor's own thickness can differ from
+        every floor above it."""
+        parapet_height = max(1, wall_height // 3) if parapet_height is None else parapet_height
+
+        top = building.floors[building.roof_floor_index]
+        roof_level = (floor_levels[building.roof_floor_index]
+                     + thicknesses[building.roof_floor_index] + wall_height)
+        shaft_top = {(r, c) for r in range(top.num_rows) for c in range(top.num_cols)
+                    if 9 <= top.rooms[r][c] <= 12}
+        cap_cells = top.footprint_cells() - shaft_top - building.roof_open_cells
+        self._fill_floor_slab(top, room_size, wall_thickness, roof_thickness, roof_level, cap_cells)
+
+        if len(building.floors) > 1:
+            ground, upper = building.floors[0], building.floors[1]
+            terrace = ground.terrace_cells(upper)
+            if terrace:
+                terrace_level = floor_levels[1]   # top of the ground floor == where floor 1 starts
+                self._fill_floor_slab(ground, room_size, wall_thickness, roof_thickness,
+                                      terrace_level, terrace)
+                # The parapet sits on the *outer boundary strip* of the terrace
+                # (where a full room wall would normally rise) -- the roof cap
+                # itself never fills that strip (only cell interiors + inter-
+                # cell seams), so the parapet must start flush at the top of
+                # the ground floor's own wall (terrace_level), not above the
+                # cap, or there's a gap between the wall-top and the parapet.
+                self._build_parapet(ground, upper, terrace, room_size, wall_thickness,
+                                    roof_thickness + parapet_height, terrace_level)
+
+    def _build_parapet(self, ground, upper, terrace_cells, room_size, wall_thickness, parapet_height, z0):
+        cell_size = room_size + wall_thickness
+        for (row, col, direction) in ground.parapet_boundaries(upper, terrace_cells):
+            if direction == 'n':
+                self.fill_box(row * cell_size, row * cell_size + wall_thickness,
+                              col * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + parapet_height)
+            elif direction == 's':
+                self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
+                              col * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + parapet_height)
+            elif direction == 'w':
+                self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                              col * cell_size, col * cell_size + wall_thickness,
+                              z0, z0 + parapet_height)
+            elif direction == 'e':
+                self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                              (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + parapet_height)

@@ -21,22 +21,27 @@ maze.py (generate)  ->  voxels.py (voxelise + erode)  ->  isometric.render_* (dr
     vectorised with `scipy.ndimage` (weighted-neighbour `correlate` + connected
     component `label`); `rng` is a NumPy `Generator`. Disconnected/cut voxels
     drop as rubble (`drop`).
-- **[sketch_floorplan.py](sketch_floorplan.py)** — the ruin alone, in isometric.
-- **[sketch_terrain.py](sketch_terrain.py)** — the ruin on a noise-driven ground
-  heightfield, with surface relief and ground shadows (`isometric.render_scene`).
+- **[sketch_floorplan.py](sketch_floorplan.py)** — the ruin in isometric, via
+  `isometric.render_voxels`. The `draw_terrain` toggle switches it to draw the
+  ruin sitting in/on a noise-driven ground heightfield instead, with surface
+  relief and ground shadows, via `isometric.render_scene`.
 
-Per-face fill pattern + colour are exposed in the sketches; pattern `"none"`
+Per-face fill pattern + colour are exposed in the sketch; pattern `"none"`
 disables a face's fill (outline only).
 
 ## Running
 
 ```
 cd floorplan
-vsk run sketch_floorplan.py      # or: sketch_terrain.py
+vsk run sketch_floorplan.py
 ```
 
 ## Tests (headless, no GUI)
 
-`test_maze.py`, `test_contain_maze.py`, `test_expand_room.py` exercise `maze.py`;
-`test_voxels.py` covers voxelisation, the vectorised erosion, flood-fill and
-`drop`. Run them with the vsketch environment's Python (needs `numpy`/`scipy`).
+See [tests/](tests/): `test_shapes.py`, `test_connectivity.py`,
+`test_shafts_basins.py`, `test_multifloor_voxels.py`, `test_building.py`,
+`test_roof.py`, `test_contain_maze.py`, `test_expand_room.py` exercise
+`maze.py`/`maze.Building`; `test_voxels.py` covers voxelisation, the
+vectorised erosion, flood-fill and `drop`. Run the whole suite with
+`python -m unittest discover` (needs the vsketch environment's Python, for
+`numpy`/`scipy`).
