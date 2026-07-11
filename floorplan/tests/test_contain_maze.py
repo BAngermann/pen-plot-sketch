@@ -1,4 +1,8 @@
+import pathlib
+import sys
 import unittest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from maze import Maze
 
 class TestContainMaze(unittest.TestCase):
