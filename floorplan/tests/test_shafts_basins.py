@@ -8,7 +8,7 @@ import pathlib
 import random
 import sys
 import unittest
-from collections import deque
+from collections import defaultdict, deque
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from maze import Maze
@@ -130,6 +130,76 @@ class TestLustralBasins(unittest.TestCase):
                                if 99 < m.rooms[r][c] < 180}
                 self.assertEqual(len(basin_cells), 4, basin_cells)
         self.assertTrue(placed_any, "basin never placed across 20 seeds at probability=1.0")
+
+    def test_basin_site_requires_a_full_buffer_not_just_the_2x2(self):
+        """A bare 2x2 pocket of state==1 cells with nothing but already-
+        carved cells immediately around it must never be chosen -- only a
+        pocket with a full 1-cell margin of untouched state==1 cells on
+        every side is acceptable (see _find_basin_site)."""
+        random.seed(0)
+        m = Maze(7, 7)
+        for r in range(7):
+            for c in range(7):
+                m.rooms[r][c] = 2   # "already carved" everywhere
+        m.rooms[3][3] = m.rooms[3][4] = m.rooms[4][3] = m.rooms[4][4] = 1   # bare 2x2, no buffer
+        self.assertIsNone(m._find_basin_site(rng=random))
+
+    def test_basin_has_exactly_one_door(self):
+        """Lustral basins are ritual spaces constrained to exactly the one
+        entrance make_lustral_basin itself defines (a 'door', not a plain
+        'air' gap -- see its docstring for why that typing matters) --
+        across many seeds, every basin must end up with exactly 1 door
+        leading OUT of its own 4 cells, never 0 (sealed shut) and never >1
+        (a second, un-architectural entry). Boundaries between two of the
+        basin's own cells are internal room connectivity, not entrances,
+        and don't count."""
+        for seed in range(30):
+            with self.subTest(seed=seed):
+                random.seed(seed)
+                m = Maze(11, 11)
+                m.gen_rooms(shape="rectangular", entrance_sides=('s', 'e'),
+                           basin_probability=1.0, max_basins=1)
+                basins = defaultdict(list)
+                for r in range(m.num_rows):
+                    for c in range(m.num_cols):
+                        if 99 < m.rooms[r][c] < 180:
+                            basins[m.rooms[r][c]].append((r, c))
+                for state, cells in basins.items():
+                    with self.subTest(state=state):
+                        cell_set = set(cells)
+                        doors, non_wall = 0, 0
+                        for (r, c) in cells:
+                            for d, (dr, dc) in (('n', (-1, 0)), ('s', (1, 0)),
+                                                ('e', (0, 1)), ('w', (0, -1))):
+                                if (r + dr, c + dc) in cell_set:
+                                    continue   # internal to the basin, not an entrance
+                                wall_type = m.get_wall(r, c, d)
+                                if wall_type == 'door':
+                                    doors += 1
+                                elif wall_type != 'wall':
+                                    non_wall += 1
+                        self.assertEqual(doors, 1, f"basin {state} has {doors} doors, cells={cells}")
+                        self.assertEqual(non_wall, 0,
+                                         f"basin {state} has {non_wall} stray non-wall/non-door openings, cells={cells}")
+
+    def test_entrance_door_survives_basin_placement(self):
+        """Regression test: a basin used to be sitable close enough to the
+        building's own outside wall that its perimeter-wall pass
+        (set_room_state(..., walls=True)) reset the entrance's connecting
+        door back to a plain wall, silently sealing the building shut."""
+        for shape in Maze._SHAPES:
+            for seed in range(15):
+                with self.subTest(shape=shape, seed=seed):
+                    random.seed(seed)
+                    m = Maze(9, 9)
+                    m.gen_rooms(shape=shape, entrance_sides=('s', 'e'), basin_probability=1.0)
+                    entrance_cells = [(r, c) for r in range(m.num_rows) for c in range(m.num_cols)
+                                      if 180 <= m.rooms[r][c] <= 183]
+                    if not entrance_cells:
+                        continue   # this shape/seed produced no entrance at all
+                    has_door = any(m.get_wall(r, c, d) == 'door'
+                                  for (r, c) in entrance_cells for d in 'nesw')
+                    self.assertTrue(has_door, "entrance lost its connecting door")
 
 
 class TestShaftsAndBasinsPipeline(unittest.TestCase):

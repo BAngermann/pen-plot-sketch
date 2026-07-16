@@ -516,8 +516,23 @@ class Maze:
 
     def _find_basin_site(self, rng=None):
         """Return (entrance_row, entrance_col, direction, orientation) for a
-        random valid 2x2 pocket of state==1 cells not touching the maze edge,
-        or None if no such pocket is found within a bounded number of tries."""
+        random valid 2x2 pocket of state==1 cells, or None if no such pocket
+        is found within a bounded number of tries.
+
+        Lustral basins are ritual spaces with exactly one architecturally-
+        fixed entrance (see make_lustral_basin) -- no other door should ever
+        reach one, and nothing about that is (or should be) enforced later
+        by special-casing every wall-setting call that might otherwise
+        clobber a door already sitting on one of its 4 boundary cells. Instead
+        the site itself must have a full 1-cell buffer of untouched
+        state==1 cells on every side (which also covers the one entrance
+        approach cell, exactly 1 step beyond the block on the entrance's own
+        side), so the basin's own perimeter can never coincide with any
+        boundary that already carries meaning -- including the maze's own
+        outside wall, which was the original source of this class of bug (a
+        basin sited close enough to the building's exterior that its own
+        perimeter-wall pass reset the entrance's connecting door back to a
+        plain wall)."""
         rng = rng or random
         for _ in range(20):
             r = rng.randint(1, self.num_rows - 2)
@@ -531,11 +546,13 @@ class Maze:
             dr, dc = offsets[orientation][direction]
             rows = [r, r + dr]
             cols = [c, c + dc]
-            if not (0 <= min(rows) and max(rows) < self.num_rows - 1
-                    and 0 <= min(cols) and max(cols) < self.num_cols - 1):
+            r0, r1 = min(rows), max(rows)
+            c0, c1 = min(cols), max(cols)
+            if not (r0 - 1 >= 0 and r1 + 1 <= self.num_rows - 1
+                    and c0 - 1 >= 0 and c1 + 1 <= self.num_cols - 1):
                 continue
-            if all(self.rooms[rr][cc] == 1 for rr in range(min(rows), max(rows) + 1)
-                   for cc in range(min(cols), max(cols) + 1)):
+            if all(self.rooms[rr][cc] == 1 for rr in range(r0 - 1, r1 + 2)
+                   for cc in range(c0 - 1, c1 + 2)):
                 return (r, c, direction, orientation)
         return None
 
@@ -630,7 +647,21 @@ class Maze:
         across one. For every light-shaft room (cells sharing one state value
         9-12) wall-adjacent to >=2 different remaining components, open one
         door from the shaft into each -- turning the shaft into a connector
-        hub, reusing its own walls (already placed by contain_room)."""
+        hub, reusing its own walls (already placed by contain_room).
+
+        TODO(pre-existing, found while stress-testing the door-redundancy
+        work, unrelated to it): with shafts/basins at their default
+        probabilities, ~3% of (shape, seed) combinations still end up with
+        >1 walkable component after gen_rooms (e.g. shape="c_shape",
+        random.seed(22), door_probability=0.9 -- reproduces with a plain
+        `Maze(9,9).gen_rooms(shape="c_shape", entrance_sides=('s','e'),
+        door_probability=0.9)`). Confirmed independent of the door-pruning
+        pass (still happens with _prune_redundant_doors's call removed).
+        Lustral basins have no analogous fallback at all here -- only light
+        shafts do -- so a basin sitting on a sole pinch point is a plausible
+        additional cause worth checking, alongside possible gaps in this
+        shaft fallback itself (e.g. a shaft touching only 1 remaining
+        component post-merge, or two shafts each touching only 1)."""
         comp_of = {cell: i for i, comp in enumerate(components) for cell in comp}
         shafts = defaultdict(list)
         for r in range(self.num_rows):
@@ -1078,12 +1109,20 @@ class Maze:
         yield from self._enclosing_boundaries(cells)
 
     def contain_maze(self):
-        """Surround the non zero cells with walls, such that cells with value 1 have a wall at the boundary facing a cell with value 0 or the edge of the domain."""
+        """Surround the non zero cells with walls, such that cells with value 1 have a wall at the boundary facing a cell with value 0 or the edge of the domain.
+        Never overwrites an existing door -- get_enclosing_walls() treats any
+        cell that isn't plain state==1 (e.g. the entrance-stair cells
+        make_foundation/make_entrance just placed) as "outside" the state==1
+        footprint, so without this guard the entrance's own door back into
+        the building would be walled back shut immediately after being set,
+        the same way contain_room() already leaves doors alone."""
         for boundary_type, row, col in self.get_enclosing_walls():
             if boundary_type == 'horizontal':
-                self.horizontal_boundaries[row][col].boundary_type = 'wall'
-            elif boundary_type == 'vertical':
-                self.vertical_boundaries[row][col].boundary_type = 'wall'
+                boundary = self.horizontal_boundaries[row][col]
+            else:
+                boundary = self.vertical_boundaries[row][col]
+            if boundary.boundary_type != 'door':
+                boundary.boundary_type = 'wall'
     
     def contain_room(self,draw_state):
         """Surround the cells with the given draw_state by replacing air with walls (leaving doors unchanged), such that cells with value draw_state have a wall at the boundary facing a cell with value != draw_state."""
@@ -1273,33 +1312,60 @@ class Maze:
         return rng.choice(candidates)
 
     def make_lustral_basin(self,entrance_row,entrance_col,direction = 'e', orientation = 'ccw'):
+        """Carve a 2x2 lustral basin -- a ritual space, architecturally
+        constrained to exactly the one entrance this call itself defines.
+        No other code should ever add a second door to a basin, and callers
+        must never site one where its own perimeter-wall pass could land on
+        a boundary that already carries meaning (an outside wall, another
+        room's door, ...) -- see _find_basin_site's 1-cell buffer
+        requirement, which is where that constraint belongs, not here.
+
+        The entrance boundary is typed 'door', not 'air': every containment
+        pass elsewhere (contain_maze, contain_room, set_room_state) already
+        treats an existing 'door' as untouchable and only ever converts
+        'air' to 'wall' -- typing this as 'air' looked like "open connection"
+        but was indistinguishable from "not yet decided", so a room placed
+        adjacent to the basin *after* this call (its own buffer cell,
+        outside the 4 basin cells the buffer protects) could still clobber
+        it via that room's own contain_room pass. 'door' is both the
+        self-protecting choice and the architecturally apt one -- a defined
+        ritual entrance, not a bare gap."""
         offsets = {'cw'  : { 'n':[ 1,-1], 'e':[-1,-1], 's':[-1, 1], 'w':[ 1, 1] },
                    'ccw' : { 'n':[ 1, 1], 'e':[ 1,-1], 's':[-1,-1], 'w':[-1, 1] } }
 
         inner_wall_offsets = {'cw'  : { 'n':0, 'e':0, 's':1, 'w':1 },
                    'ccw' : { 'n':1, 'e':1, 's':0, 'w':0 } }
+        # TODO(dormant, currently unreachable): only 8 (direction, orientation)
+        # combinations exist here, unlike stairs' unused_stair_state -- two
+        # basins with max_basins > 1 can land on the same state value and get
+        # merged by anything that groups cells by exact room-state (e.g. a
+        # cells-sharing-one-state scan), each still correctly getting its own
+        # single door, but miscounted as one basin with two. Not reachable
+        # today since max_basins is always 1 everywhere it's called; would
+        # need its own per-orientation uniqueness scheme (like
+        # unused_stair_state) if that ever changes.
         room_states = {'n': 100,'e': 110,'s': 120,'w': 130}
-        
+
         state = room_states[direction]
         if orientation == 'cw':
             state += 40
-            
+
         rows = [entrance_row,entrance_row + offsets[orientation][direction][0]]
         cols = [entrance_col,entrance_col + offsets[orientation][direction][1]]
         self.set_room_state(min(rows),max(rows)+1,min(cols),max(cols)+1,state,walls = True,doors = "....")
         # add the entrance and the wall separating the entrance from the basin itself.
         match direction:
             case 'n':
-                self.horizontal_boundaries[min(rows)][entrance_col].boundary_type = 'air'
+                self.horizontal_boundaries[min(rows)][entrance_col].boundary_type = 'door'
                 self.vertical_boundaries[entrance_row][entrance_col+inner_wall_offsets[orientation][direction]].boundary_type = 'wall'
             case 'e':
-                self.vertical_boundaries[entrance_row][max(cols)+1].boundary_type = 'air'
+                self.vertical_boundaries[entrance_row][max(cols)+1].boundary_type = 'door'
                 self.horizontal_boundaries[entrance_row + inner_wall_offsets[orientation][direction]][entrance_col].boundary_type = 'wall'
             case 's':
-                self.horizontal_boundaries[max(rows)+1][entrance_col].boundary_type = 'air'
+                self.horizontal_boundaries[max(rows)+1][entrance_col].boundary_type = 'door'
                 self.vertical_boundaries[entrance_row][entrance_col+inner_wall_offsets[orientation][direction]].boundary_type = 'wall'
             case 'w':
-                self.vertical_boundaries[entrance_row][min(cols)].boundary_type = 'air'
+                self.vertical_boundaries[entrance_row][min(cols)].boundary_type = 'door'
                 self.horizontal_boundaries[entrance_row + inner_wall_offsets[orientation][direction]][entrance_col].boundary_type = 'wall'
         
     def set_wall(self,row,col,direction='n',type='wall'):
