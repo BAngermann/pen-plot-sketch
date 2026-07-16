@@ -88,6 +88,47 @@ class TestConnectivity(unittest.TestCase):
                                                                   cell_b, ext_group_b, ext_cell_b),
                                         f"redundant door pair on room {group}: {doors[i]} / {doors[j]}")
 
+    def test_no_avoidable_unanchored_colinear_conflicts(self):
+        """A door should never sit right next to open air, or another door,
+        continuing the same straight wall run *with no perpendicular wall
+        anchoring the corner they share* (see _touches_colinear_air /
+        _touches_colinear_door). Most commonly: a plain corridor tile's door
+        into a room, with the corridor's own sidewinder-carved passage
+        continuing as air along the very same unbroken wall; or two doors
+        placed back to back with no wall material between them at all. A
+        colinear neighbor where the shared corner *is* anchored by a
+        perpendicular wall is a different, unrelated wall run meeting at a
+        real corner pillar (e.g. a room's own doorway sitting beside an
+        unrelated corridor passage, or a second unrelated doorway, one
+        row/column over, separated by a real wall) -- not a problem, and not
+        what this test checks; only the two _touches_colinear_* checks'
+        actual verdicts matter here. ensure_connectivity/_add_extra_doors
+        avoid the unanchored case whenever an alternative exists; the only
+        acceptable exception is a door that's the sole remaining connector
+        for its part of the maze (verified here directly: removing it must
+        disconnect the graph), matching the same "connectivity always wins"
+        carve-out as the redundant-door-pair rule above."""
+        for shape in _SHAPES:
+            for seed in range(15):
+                with self.subTest(shape=shape, seed=seed):
+                    random.seed(seed)
+                    m = Maze(9, 9)
+                    m.gen_rooms(shape=shape, entrance_sides=('s', 'e'), door_probability=0.5)
+                    for row in range(m.num_rows):
+                        for col in range(m.num_cols):
+                            for d in 'nesw':
+                                if m.get_wall(row, col, d) != 'door':
+                                    continue
+                                if not (m._touches_colinear_air(row, col, d)
+                                       or m._touches_colinear_door(row, col, d)):
+                                    continue
+                                with self.subTest(row=row, col=col, d=d):
+                                    m.set_wall(row, col, d, 'wall')
+                                    still_connected = len(m._walkable_components()) == 1
+                                    m.set_wall(row, col, d, 'door')
+                                    self.assertFalse(still_connected,
+                                                     "avoidable unanchored colinear conflict")
+
     def test_sidewinder_rng_does_not_clobber_global_state(self):
         random.seed(123)
         before = random.random()

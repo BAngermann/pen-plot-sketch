@@ -656,7 +656,7 @@ class Maze:
         random.seed(22), door_probability=0.9 -- reproduces with a plain
         `Maze(9,9).gen_rooms(shape="c_shape", entrance_sides=('s','e'),
         door_probability=0.9)`). Confirmed independent of the door-pruning
-        pass (still happens with _prune_redundant_doors's call removed).
+        pass (still happens with _prune_bad_doors's call removed).
         Lustral basins have no analogous fallback at all here -- only light
         shafts do -- so a basin sitting on a sole pinch point is a plausible
         additional cause worth checking, alongside possible gaps in this
@@ -724,20 +724,25 @@ class Maze:
         roots = {find(i) for i in range(len(components))}
         # Two passes: first try only candidates that don't create a redundant
         # door pair on either room they touch (see _would_create_redundant_door)
+        # or sit right next to open air or another door along the same
+        # unanchored wall run (see _touches_colinear_air/_touches_colinear_door)
         # -- with many wall-adjacent pairs to choose from this is almost
-        # always enough. A second pass allows it rather than leaving the maze
-        # disconnected -- connectivity always wins. In practice this fallback
-        # should rarely if ever trigger: a connection that's genuinely the
-        # only way to merge two components has infinite outside-distance,
-        # which the redundancy test always treats as "useful" on its own.
-        for allow_redundant in (False, True):
+        # always enough. A second pass allows it rather
+        # than leaving the maze disconnected -- connectivity always wins. In
+        # practice this fallback should rarely if ever trigger: a connection
+        # that's genuinely the only way to merge two components has infinite
+        # outside-distance, which the redundancy test always treats as
+        # "useful" on its own.
+        for allow_anyway in (False, True):
             for (row, col, d, i, j) in candidates:
                 if len(roots) <= 1:
                     break
                 ri, rj = find(i), find(j)
                 if ri == rj:
                     continue
-                if not allow_redundant and self._would_create_redundant_door(row, col, d):
+                if not allow_anyway and (self._would_create_redundant_door(row, col, d)
+                                          or self._touches_colinear_air(row, col, d)
+                                          or self._touches_colinear_door(row, col, d)):
                     continue
                 self.set_wall(row, col, d, 'door')
                 parent[ri] = rj
@@ -875,7 +880,7 @@ class Maze:
         exists, still forms) a redundant pair (see _is_redundant_door_pair)
         with another door on either room it connects. Safe to call both
         before placement (checking a candidate) and after (re-checking an
-        existing door, e.g. from _prune_redundant_doors) -- the self-match
+        existing door, e.g. from _prune_bad_doors) -- the self-match
         skip compares the full boundary identity, not just the room-side
         cell, so it can't also skip a genuinely different door that happens
         to share that same cell."""
@@ -891,19 +896,77 @@ class Maze:
                     return True
         return False
 
+    def _touches_colinear(self, row, col, d, target_type):
+        """True if a boundary immediately continuing the same straight wall
+        run as (row, col, d) -- same orientation, same grid line, adjacent
+        index -- is currently `target_type` ('air' or 'door') AND the corner
+        the two share has no perpendicular wall anchoring it. A perpendicular
+        wall at that corner (on either the near or far side) means the two
+        boundaries are genuinely different wall runs meeting at a real
+        corner pillar -- that's fine, and common (e.g. a room's own doorway
+        sitting right beside an unrelated corridor passage, or a second
+        unrelated doorway, one row/column over, with a real wall between
+        them). Only a corner with nothing solid at all anchoring it means
+        (row, col, d) runs directly into open air or another door with no
+        frame on that side, which shouldn't happen: most commonly a plain
+        corridor tile's door into a room with the corridor's own
+        sidewinder-carved passage continuing as air along the very same
+        unbroken wall (target_type='air'), or two doors placed back to back
+        along one wall with no wall material between them at all
+        (target_type='door'). This is a distinct case from two doors meeting
+        *across* a corner (see _would_create_redundant_door) -- this is
+        same-line adjacency."""
+        if d in ('n', 's'):
+            gr = row if d == 'n' else row + 1
+            for gc in (col, col + 1):   # shared corner of the west/east neighbor, respectively
+                neighbor_col = gc - 1 if gc == col else gc
+                if not (0 <= neighbor_col < self.num_cols):
+                    continue
+                if self.horizontal_boundaries[gr][neighbor_col].boundary_type != target_type:
+                    continue
+                anchored = ((gr - 1 >= 0 and self.vertical_boundaries[gr - 1][gc].boundary_type == 'wall')
+                           or (gr < self.num_rows and self.vertical_boundaries[gr][gc].boundary_type == 'wall'))
+                if not anchored:
+                    return True
+        else:
+            gc = col if d == 'w' else col + 1
+            for gr in (row, row + 1):   # shared corner of the north/south neighbor, respectively
+                neighbor_row = gr - 1 if gr == row else gr
+                if not (0 <= neighbor_row < self.num_rows):
+                    continue
+                if self.vertical_boundaries[neighbor_row][gc].boundary_type != target_type:
+                    continue
+                anchored = ((gc - 1 >= 0 and self.horizontal_boundaries[gr][gc - 1].boundary_type == 'wall')
+                           or (gc < self.num_cols and self.horizontal_boundaries[gr][gc].boundary_type == 'wall'))
+                if not anchored:
+                    return True
+        return False
+
+    def _touches_colinear_air(self, row, col, d):
+        return self._touches_colinear(row, col, d, 'air')
+
+    def _touches_colinear_door(self, row, col, d):
+        # Excludes (row, col, d) itself: it's currently a candidate ('wall')
+        # or an already-placed door being re-checked, but its own colinear
+        # neighbor can never be itself, so no self-match guard is needed
+        # here the way _would_create_redundant_door needs one.
+        return self._touches_colinear(row, col, d, 'door')
+
     def _add_extra_doors(self, rng=None, probability=0.2):
         """After connectivity is guaranteed, probabilistically open additional
         'wall' boundaries between two walkable cells into 'door' -- liberal
         doorways beyond the bare reachability minimum, for visual variety
         (their eroded lintels look good after decay_texture). Skips any
         candidate that's already redundant against the doors that exist at
-        the time it's considered (see _would_create_redundant_door) -- a
-        final cleanup pass over every door, run once by gen_rooms after this
-        (_prune_redundant_doors), catches whatever this per-candidate check
-        can't: adding doors elsewhere later in this same sweep can shorten a
-        detour enough to make an earlier, previously-fine pair redundant in
-        hindsight, and the same can happen across the boundary between
-        ensure_connectivity's doors and these ones."""
+        the time it's considered (see _would_create_redundant_door), or that
+        would sit right next to open air along the same wall run (see
+        _touches_colinear_air) -- a final cleanup pass over every door, run
+        once by gen_rooms after this (_prune_bad_doors), catches
+        whatever this per-candidate check can't: adding doors elsewhere
+        later in this same sweep can shorten a detour enough to make an
+        earlier, previously-fine pair redundant in hindsight, and the same
+        can happen across the boundary between ensure_connectivity's doors
+        and these ones."""
         rng = rng or random
         if probability <= 0:
             return
@@ -918,24 +981,30 @@ class Maze:
                     if not self._is_walkable_state(self.rooms[nr][nc]):
                         continue
                     if self.get_wall(row, col, d) == 'wall' and rng.random() < probability \
-                       and not self._would_create_redundant_door(row, col, d):
+                       and not self._would_create_redundant_door(row, col, d) \
+                       and not self._touches_colinear_air(row, col, d) \
+                       and not self._touches_colinear_door(row, col, d):
                         self.set_wall(row, col, d, 'door')
 
-    def _prune_redundant_doors(self):
+    def _prune_bad_doors(self):
         """Final cleanup over every door between two walkable cells (this
         deliberately excludes the building's entrance and lustral-basin
         doors, which are single fixed structural features, not part of the
         liberal-connectivity door pool): revert any still-redundant one
-        (see _would_create_redundant_door), as long as doing so doesn't
+        (see _would_create_redundant_door) or one still touching colinear
+        air (see _touches_colinear_air), as long as doing so doesn't
         disconnect the maze -- a door ensure_connectivity placed because it
         was the only route at the time can become genuinely optional once
         other doors (from ensure_connectivity's own later merges or from
-        _add_extra_doors) open up an alternate way around, so this is checked
-        fresh against the network's final state rather than trusting
-        whichever mechanism placed each door to have gotten it right forever.
-        Removing a door only ever makes other pairs *more* useful (any route
-        around a room gets longer or stays the same, never shorter), so this
-        greedily converges."""
+        _add_extra_doors) open up an alternate way around, so redundancy is
+        checked fresh against the network's final state rather than trusting
+        whichever mechanism placed each door to have gotten it right forever
+        (the colinear-air check doesn't actually need this re-validation --
+        nothing after sidewinder ever turns a boundary back into 'air' -- but
+        catching it here too costs nothing and keeps both checks in one
+        place). Reverting a door only ever helps: it can't make any other
+        pair less useful or touch new air elsewhere, so this greedily
+        converges."""
         candidates = []
         for row in range(self.num_rows):
             for col in range(self.num_cols):
@@ -953,7 +1022,9 @@ class Maze:
             for (row, col, d) in candidates:
                 if self.get_wall(row, col, d) != 'door':
                     continue
-                if not self._would_create_redundant_door(row, col, d):
+                if not (self._would_create_redundant_door(row, col, d)
+                       or self._touches_colinear_air(row, col, d)
+                       or self._touches_colinear_door(row, col, d)):
                     continue
                 self.set_wall(row, col, d, 'wall')
                 if len(self._walkable_components()) > 1:
@@ -1048,7 +1119,7 @@ class Maze:
 
         self.ensure_connectivity(rng=rng, is_ground_floor=is_ground_floor)
         self._add_extra_doors(rng=rng, probability=door_probability)
-        self._prune_redundant_doors()
+        self._prune_bad_doors()
 
         if forced_cells:
             for (r, c) in forced_cells:
@@ -1519,6 +1590,12 @@ class Building:
                 row, col, direction = site
                 state_base = ground.unused_stair_state(direction)
                 ground.make_stairs(row, col, direction, length=stair_length, state_value=state_base)
+                # make_stairs carves its own internal 'air' connections
+                # (including the entry from whatever room it starts in) --
+                # this runs after ground.gen_rooms()'s own door-pruning
+                # already finished, so re-run it to catch a door that just
+                # became colinear-adjacent to one of those new air segments.
+                ground._prune_bad_doors()
                 flight_cells = [(row, col)]
                 for _ in range(stair_length - 1):
                     flight_cells.append(Maze.step(*flight_cells[-1], direction))
@@ -1548,6 +1625,7 @@ class Building:
                 # landing. Breach that one boundary back open.
                 if len(flight_cells) > 1:
                     upper.set_wall(*landing, direction=opposite[direction], type='air')
+                    upper._prune_bad_doors()   # re-check: this new air segment runs after upper.gen_rooms()'s own pruning
                 self.floors.append(upper)
                 self.stair_links.append({'from_floor': 0, 'to_floor': 1, 'landing': landing,
                                           'flight_cells': set(flight_cells), 'state_base': state_base})
@@ -1568,6 +1646,7 @@ class Building:
                 row, col, direction = site
                 state_value = top.unused_stair_state(direction)
                 top.make_stairs(row, col, direction, length=2, state_value=state_value)
+                top._prune_bad_doors()   # same reasoning as the inter-floor stair case above
                 landing = Maze.step(row, col, direction)
                 self.roof_open_cells.add(landing)
                 self.roof_stair_state = state_value
