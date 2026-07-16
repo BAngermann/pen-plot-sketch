@@ -158,24 +158,24 @@ class PositionGrid:
             self.fill_box(row * cell_size + wall_thickness, (row + 1) * cell_size,
                           col * cell_size + wall_thickness, (col + 1) * cell_size,
                           z0, z0 + thickness)
+            # Always the generous (corner-covering) fill -- fill_box just adds
+            # to a set, so overshooting a wall_thickness strip into a
+            # perpendicular neighbour's row/column is harmless even when that
+            # neighbour isn't in `cells` (same reasoning as the boundary
+            # strips below). A narrower fill keyed on whether the
+            # perpendicular neighbour is also present used to leave the
+            # shared corner between 4 cells unfilled whenever `cells` has an
+            # irregular boundary (e.g. a terrace ring notched by the floor
+            # above) -- each of the two seam fills backed off independently,
+            # and neither alone covered the corner square.
             if (row, col + 1) in cells:
-                if (row + 1, col) in cells and (row - 1, col) in cells:
-                    self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
-                                  (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
-                                  z0, z0 + thickness)
-                else:  # still not quite correct, needs separate cases for either row direction
-                    self.fill_box(row * cell_size + wall_thickness, (row + 1) * cell_size,
-                                  (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
-                                  z0, z0 + thickness)
+                self.fill_box(row * cell_size, (row + 1) * cell_size + wall_thickness,
+                              (col + 1) * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + thickness)
             if (row + 1, col) in cells:
-                if (row, col + 1) in cells and (row, col - 1) in cells:
-                    self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
-                                  col * cell_size, (col + 1) * cell_size + wall_thickness,
-                                  z0, z0 + thickness)
-                else:  # still not quite correct, needs separate cases for either column direction
-                    self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
-                                  col * cell_size + wall_thickness, (col + 1) * cell_size,
-                                  z0, z0 + thickness)
+                self.fill_box((row + 1) * cell_size, (row + 1) * cell_size + wall_thickness,
+                              col * cell_size, (col + 1) * cell_size + wall_thickness,
+                              z0, z0 + thickness)
             # Exterior boundary strips: no same-region neighbour there, so
             # nothing else (seam fill or wall) would cover this cap slab's own
             # footprint edge -- fill it directly, generous past the corners
@@ -557,10 +557,12 @@ class PositionGrid:
                      parapet_height=None, roof_thickness=None):
         """Voxelise every floor of a maze.Building into one combined occupancy
         set, stacking each floor directly on top of the previous one's own
-        ceiling, and omitting each upper floor's own stair-landing cell from
+        ceiling, and omitting each upper floor's own stair-flight cells from
         its own floor slab -- that omission is the literal hole the stairs
-        below rise into (fromMaze's roof_stair_state/roof_break_height punch
-        the flight itself up through what would otherwise be its ceiling).
+        below rise into, kept open across the whole flight (not just its
+        landing) so headroom stays a full room height along the whole climb
+        (fromMaze's roof_stair_state/roof_break_height punch the flight
+        itself up through what would otherwise be its ceiling).
         Roof capping and the ground-floor roof terrace + parapet are added
         after the floor loop (see PositionGrid._cap_roof).
 
@@ -587,7 +589,13 @@ class PositionGrid:
             if i > 0:
                 for link in building.stair_links:
                     if link['to_floor'] == i:
-                        omit.add(link['landing'])
+                        # The whole flight, not just the landing -- a flat
+                        # slab at a fixed height above a rising staircase
+                        # gives shrinking headroom over the run and would dip
+                        # below a full room's clearance well before the top
+                        # step. Open the slab across the entire flight so
+                        # clearance stays a full room height throughout.
+                        omit.update(link['flight_cells'])
             is_roof_floor = (i == building.roof_floor_index)
             roof_stair_state = building.roof_stair_state if is_roof_floor else None
             # Genuine headroom above the roof cap's own top surface (not just
@@ -624,7 +632,14 @@ class PositionGrid:
 
         if len(building.floors) > 1:
             ground, upper = building.floors[0], building.floors[1]
-            terrace = ground.terrace_cells(upper)
+            # A stair flight's non-landing cells are excluded from floor2's
+            # own footprint (see Building.generate), so they fall out as
+            # "terrace" too -- ground floor roof it doesn't cover -- and
+            # would otherwise get capped right back over, sealing the
+            # stairwell the same way an uncapped floor slab alone couldn't.
+            stair_voids = {cell for link in building.stair_links if link['to_floor'] == 1
+                          for cell in link['flight_cells'] - {link['landing']}}
+            terrace = ground.terrace_cells(upper) - stair_voids
             if terrace:
                 terrace_level = floor_levels[1]   # top of the ground floor == where floor 1 starts
                 self._fill_floor_slab(ground, room_size, wall_thickness, roof_thickness,

@@ -1,3 +1,4 @@
+import math
 import pathlib
 import random
 import sys
@@ -53,17 +54,26 @@ class FloorplanSketch(vsketch.SketchClass):
     floor2_area_threshold = vsketch.Param(50, min_value=0)
     stair_length = vsketch.Param(3, min_value=2)
     roof_access = vsketch.Param("auto", choices=["auto", "stairs", "hatch", "none"])
+    min_hatch_voxels = vsketch.Param(5, min_value=1)   # roof hatch spans multiple cells if room_size is too small
     parapet_height = vsketch.Param(3, min_value=1)
 
+    # ── Debug ─────────────────────────────────────────────────────────────────
+    debug_marker = vsketch.Param(False)         # tall voxel spike at (debug_marker_x, debug_marker_y)
+    debug_marker_x = vsketch.Param(0, min_value=0)   # raw voxel coords, not maze row/col
+    debug_marker_y = vsketch.Param(0, min_value=0)
+    debug_hide_floor2 = vsketch.Param(False)    # drop every voxel at/above debug_hide_floor2_z
+    debug_hide_floor2_z = vsketch.Param(11, min_value=0)   # default: top of the ground floor's own walls
+    debug_hide_non_ground_slabs = vsketch.Param(False)   # hide floor2's slab/roof cap/terrace cap, keep all walls
+
     # ── Voxelisation (cell = room_size + wall_thickness) ────────────────────────
-    room_size = vsketch.Param(6, min_value=2)
+    room_size = vsketch.Param(7, min_value=2)
     wall_thickness = vsketch.Param(2, min_value=1)
     wall_height = vsketch.Param(8, min_value=1)
-    floor_thickness = vsketch.Param(3, min_value=1)          # upper floor(s) + roof/terrace cap
+    floor_thickness = vsketch.Param(1, min_value=1)          # upper floor(s) + roof/terrace cap
     ground_floor_thickness = vsketch.Param(3, min_value=1)   # ground floor's own slab only
 
     # ── Erosion (ruins) ─────────────────────────────────────────────────────────
-    decay_reps = vsketch.Param(4, min_value=0)
+    decay_reps = vsketch.Param(0, min_value=0)
     decay_seed = vsketch.Param(0)
     noise_scale = vsketch.Param(0.02, min_value=0.001, decimals=3)
     # NB: vsk.noise is ~[0,1] (Blender's mathutils.fractal was ~[-1,1]); these
@@ -134,6 +144,7 @@ class FloorplanSketch(vsketch.SketchClass):
             floor2_area_threshold=self.floor2_area_threshold,
             stair_length=self.stair_length,
             roof_access=self.roof_access,
+            roof_hatch_cells=math.ceil(self.min_hatch_voxels / self.room_size),
             door_probability=self.door_probability,
             max_explicit_rooms=self.max_explicit_rooms,
             max_shafts=self.max_shafts,
@@ -166,7 +177,61 @@ class FloorplanSketch(vsketch.SketchClass):
                             noise_offset=self.noise_offset,
                             neighbor_baseline=self.neighbor_baseline,
                             terrain_z=terrain_z)
-        return g.all_occupied_positions, hf
+
+        occ = g.all_occupied_positions
+
+        if self.debug_hide_floor2:
+            # debug_hide_floor2_z defaults to the top of the ground floor's
+            # own walls (floor2 -- its slab, walls, and everything above --
+            # starts exactly there), but is user-adjustable to cut off at any
+            # height.
+            occ = {(x, y, z) for (x, y, z) in occ if z < self.debug_hide_floor2_z}
+
+        if self.debug_hide_non_ground_slabs:
+            # Hide every horizontal slab/cap surface except the ground
+            # floor's own base slab (floor2's own floor slab, the roof cap,
+            # the ground floor's terrace cap), but keep walls/parapets fully
+            # visible -- a voxel only counts as a bare "slab" (dropped) if its
+            # (x, y) column doesn't extend any higher than the slab itself; a
+            # column that keeps going up is a wall/parapet passing through
+            # the same footprint, and is kept in full.
+            thicknesses = [self.ground_floor_thickness] + [self.floor_thickness] * (len(building.floors) - 1)
+            floor_levels = []
+            z = 0
+            for t in thicknesses:
+                floor_levels.append(z)
+                z += t + self.wall_height
+            roof_thickness = self.floor_thickness
+            roof_level = (floor_levels[building.roof_floor_index]
+                         + thicknesses[building.roof_floor_index] + self.wall_height)
+            hide_ranges = [(roof_level, roof_level + roof_thickness)]
+            if len(building.floors) > 1:
+                hide_ranges.append((floor_levels[1], floor_levels[1] + self.floor_thickness))
+                hide_ranges.append((floor_levels[1], floor_levels[1] + roof_thickness))
+
+            col_max = {}
+            for (x, y, z) in occ:
+                k = (x, y)
+                if k not in col_max or z > col_max[k]:
+                    col_max[k] = z
+
+            def keep(x, y, z):
+                covering = [hi for lo, hi in hide_ranges if lo <= z < hi]
+                if not covering:
+                    return True
+                return col_max[(x, y)] >= max(covering)
+
+            occ = {(x, y, z) for (x, y, z) in occ if keep(x, y, z)}
+
+        if self.debug_marker:
+            # Tall spike piercing straight up through the structure, so its
+            # (x, y) is unambiguous on screen regardless of which surface/z it
+            # would otherwise land on -- drag debug_marker_x/y until it lines
+            # up with whatever you're trying to locate.
+            top = max((z for _x, _y, z in occ), default=0)
+            occ = occ | {(self.debug_marker_x, self.debug_marker_y, z)
+                        for z in range(0, top + 15)}
+        return occ, hf
 
     def _build_terrain(self, vsk: vsketch.Vsketch, occ):
         m = self.subdiv

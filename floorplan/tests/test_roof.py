@@ -152,6 +152,30 @@ class TestRoofAccessModes(unittest.TestCase):
                      not in g.all_occupied_positions]
         self.assertEqual(set(open_cells), b.roof_open_cells)
 
+    def test_roof_access_hatch_spans_a_multi_cell_block_when_requested(self):
+        # A single maze cell is only room_size voxels wide, which can be tiny
+        # at small room_size -- roof_hatch_cells lets the hatch span a solid
+        # block of cells instead, so the opening has a real minimum size
+        # independent of room_size.
+        random.seed(2)
+        b = Building(9, 9).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                    floor2_area_threshold=10**9, roof_access="hatch",
+                                    roof_hatch_cells=3, place_shafts=False)
+        self.assertGreater(len(b.roof_open_cells), 1, b.roof_open_cells)
+        rows = {r for r, _c in b.roof_open_cells}
+        cols = {c for _r, c in b.roof_open_cells}
+        self.assertEqual(len(b.roof_open_cells), len(rows) * len(cols),
+                         "hatch cells should form a solid rectangular block, not scattered cells")
+
+    def test_roof_access_hatch_shrinks_block_to_fit_a_small_footprint(self):
+        # Requesting a block bigger than the whole floor must not crash or
+        # leave roof_open_cells empty -- it should shrink down to whatever fits.
+        random.seed(2)
+        b = Building(9, 9).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                    floor2_area_threshold=10**9, roof_access="hatch",
+                                    roof_hatch_cells=99, place_shafts=False)
+        self.assertTrue(b.roof_open_cells, "hatch should still place something on an oversized request")
+
     def test_roof_access_stairs_rise_into_the_opening(self):
         # Try a few seeds since "stairs" mode can fall back to "hatch" if no
         # straight run fits; we want a seed where the stairs path is
@@ -190,6 +214,36 @@ class TestRoofAccessModes(unittest.TestCase):
 
         self.assertGreater(max_z_stairs, max_z_sealed,
                            "roof stairway should rise above a sealed roof")
+
+
+class TestInterFloorStairHeadroom(unittest.TestCase):
+    def test_whole_flight_is_open_above_not_just_the_landing(self):
+        """A flat slab at a fixed height above a rising staircase gives
+        shrinking headroom over the run -- the floor above must be opened
+        across the entire flight, not just its top step, so clearance stays
+        a full room height throughout the climb."""
+        random.seed(4)
+        stair_length = 3
+        b = Building(11, 11).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                      floor2_area_threshold=20, stair_length=stair_length)
+        self.assertEqual(len(b.floors), 2, "test needs floor2 to be generated")
+        link = b.stair_links[0]
+        self.assertEqual(len(link['flight_cells']), stair_length,
+                         "test needs a multi-cell flight to be meaningful")
+
+        room_size, wall_thickness, wall_height, floor_thickness = 6, 2, 8, 3
+        g = PositionGrid(11, 11, wall_height)
+        g.fromBuilding(b, room_size=room_size, wall_thickness=wall_thickness,
+                       wall_height=wall_height, floor_thickness=floor_thickness)
+
+        cell_size = room_size + wall_thickness
+        floor1_ceiling_z = floor_thickness + wall_height
+        for (row, col) in link['flight_cells']:
+            cx = row * cell_size + wall_thickness + room_size // 2
+            cy = col * cell_size + wall_thickness + room_size // 2
+            with self.subTest(cell=(row, col)):
+                self.assertNotIn((cx, cy, floor1_ceiling_z), g.all_occupied_positions,
+                                 "floor above must be open over the whole flight, not just the landing")
 
 
 if __name__ == "__main__":

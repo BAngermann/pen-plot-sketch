@@ -55,6 +55,39 @@ class TestConnectivity(unittest.TestCase):
         door_count += sum(1 for row in m.vertical_boundaries for b in row if b.boundary_type == 'door')
         self.assertGreater(door_count, 3, "expected liberal doors with door_probability=0.5")
 
+    def test_no_redundant_door_pairs(self):
+        # High door_probability to make a redundant pair likely if the guard
+        # weren't there. For every room, every pair of its own doors must be
+        # "genuinely useful" together: either there's no route around the
+        # room at all, or going around is at least _DOOR_USEFULNESS_MARGIN
+        # tiles longer than cutting straight through it (see
+        # _is_redundant_door_pair) -- otherwise the second door is just a
+        # redundant hole (this subsumes and replaces the older, narrower
+        # "two doors must never meet at a corner" rule: a corner with no
+        # solid wall material was one symptom of a redundant pair, but a
+        # pair on opposite sides of a room with a short way around is
+        # another, and a corner pair with a genuinely long way around is
+        # perfectly fine).
+        for shape in _SHAPES:
+            for seed in range(10):
+                with self.subTest(shape=shape, seed=seed):
+                    random.seed(seed)
+                    m = Maze(9, 9)
+                    m.gen_rooms(shape=shape, entrance_sides=('s', 'e'), door_probability=0.9)
+                    groups = {m._room_group(r, c) for r in range(m.num_rows) for c in range(m.num_cols)
+                             if m._is_walkable_state(m.rooms[r][c])}
+                    for group in groups:
+                        doors = m._doors_touching_group(group)
+                        for i in range(len(doors)):
+                            for j in range(i + 1, len(doors)):
+                                cell_a, ext_group_a, ext_cell_a = doors[i]
+                                cell_b, ext_group_b, ext_cell_b = doors[j]
+                                with self.subTest(group=group, a=doors[i], b=doors[j]):
+                                    self.assertFalse(
+                                        m._is_redundant_door_pair(group, cell_a, ext_group_a, ext_cell_a,
+                                                                  cell_b, ext_group_b, ext_cell_b),
+                                        f"redundant door pair on room {group}: {doors[i]} / {doors[j]}")
+
     def test_sidewinder_rng_does_not_clobber_global_state(self):
         random.seed(123)
         before = random.random()

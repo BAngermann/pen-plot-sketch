@@ -49,6 +49,19 @@ class TestStairLandingCorrectness(unittest.TestCase):
                         "landing missing from any walkable component")
         self.assertEqual(len(comps), 1, "upper floor should be fully connected")
 
+    def test_flight_cells_span_the_whole_stair_run(self):
+        """flight_cells must cover every cell of the flight (not just the
+        landing) -- that's what lets fromBuilding open the floor above across
+        the whole climb, not just its top step."""
+        random.seed(4)
+        stair_length = 3
+        b = Building(11, 11).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                      floor2_area_threshold=20, stair_length=stair_length)
+        self.assertEqual(len(b.floors), 2, "test needs floor2 to be generated")
+        link = b.stair_links[0]
+        self.assertEqual(len(link['flight_cells']), stair_length)
+        self.assertIn(link['landing'], link['flight_cells'])
+
     def test_landing_across_many_seeds_and_shapes(self):
         """Stress test across every shape/seed. Checks the landing
         specifically -- not "the whole upper floor is one component", which

@@ -691,24 +691,188 @@ class Maze:
         rng.shuffle(candidates)
 
         roots = {find(i) for i in range(len(components))}
-        for (row, col, d, i, j) in candidates:
+        # Two passes: first try only candidates that don't create a redundant
+        # door pair on either room they touch (see _would_create_redundant_door)
+        # -- with many wall-adjacent pairs to choose from this is almost
+        # always enough. A second pass allows it rather than leaving the maze
+        # disconnected -- connectivity always wins. In practice this fallback
+        # should rarely if ever trigger: a connection that's genuinely the
+        # only way to merge two components has infinite outside-distance,
+        # which the redundancy test always treats as "useful" on its own.
+        for allow_redundant in (False, True):
+            for (row, col, d, i, j) in candidates:
+                if len(roots) <= 1:
+                    break
+                ri, rj = find(i), find(j)
+                if ri == rj:
+                    continue
+                if not allow_redundant and self._would_create_redundant_door(row, col, d):
+                    continue
+                self.set_wall(row, col, d, 'door')
+                parent[ri] = rj
+                roots.discard(ri)
             if len(roots) <= 1:
                 break
-            ri, rj = find(i), find(j)
-            if ri == rj:
-                continue
-            self.set_wall(row, col, d, 'door')
-            parent[ri] = rj
-            roots.discard(ri)
 
         if len(roots) > 1 and is_ground_floor:
             self._connect_via_light_shafts(self._walkable_components(), rng)
+
+    # A room's two doors are only "genuinely useful" together if cutting
+    # through the room is a meaningfully better shortcut than any route that
+    # avoids it -- otherwise the second door is just a redundant hole. This
+    # generalizes the narrower "two doors must never meet at a corner" rule:
+    # a corner with no other wall material was one symptom of a redundant
+    # pair, but so is a pair of doors on opposite sides of a room if going
+    # around isn't meaningfully slower. _OUTSIDE is a virtual single-tile
+    # room standing in for the world beyond the maze's edge, reached only via
+    # the (at most one) grid-edge entrance door -- so if that entrance's own
+    # room is the one being avoided, _OUTSIDE is correctly unreachable, and
+    # any other door on the entrance room is automatically "useful" (its
+    # outside-distance is infinite) without any special-casing.
+    _OUTSIDE = "outside"
+    _DOOR_USEFULNESS_MARGIN = 3
+
+    def _room_group(self, row, col):
+        """Cells sharing one explicit-room or stair-flight state value (2-8,
+        20-99) count as one room; every other walkable cell (plain corridor)
+        is its own single-tile room."""
+        v = self.rooms[row][col]
+        if 2 <= v <= 8 or 20 <= v <= 99:
+            return v
+        return (row, col)
+
+    def _far_side(self, row, col, d):
+        """(room_group, cell) on the far side of boundary (row, col, d), or
+        (_OUTSIDE, None) if it steps off the edge of the grid."""
+        dr, dc = {'n': (-1, 0), 'e': (0, 1), 's': (1, 0), 'w': (0, -1)}[d]
+        nr, nc = row + dr, col + dc
+        if not (0 <= nr < self.num_rows and 0 <= nc < self.num_cols):
+            return self._OUTSIDE, None
+        return self._room_group(nr, nc), (nr, nc)
+
+    def _doors_touching_group(self, group):
+        """(cell, far_group, far_cell) for every existing door with its
+        room-side cell in `group`."""
+        result = []
+        for row in range(self.num_rows):
+            for col in range(self.num_cols):
+                if self._room_group(row, col) != group:
+                    continue
+                for d in 'nesw':
+                    if self.get_wall(row, col, d) == 'door':
+                        far_group, far_cell = self._far_side(row, col, d)
+                        if far_group != group:
+                            result.append(((row, col), far_group, far_cell))
+        return result
+
+    def _room_interior_distance(self, group, start, goal):
+        """BFS distance from `start` to `goal` using only cells in `group`,
+        or None if they aren't connected through it."""
+        if start == goal:
+            return 0
+        from collections import deque
+        visited = {start}
+        q = deque([(start, 0)])
+        while q:
+            (r, c), dist = q.popleft()
+            for (dr, dc) in ((-1, 0), (1, 0), (0, 1), (0, -1)):
+                nr, nc = r + dr, c + dc
+                if (nr, nc) in visited or not (0 <= nr < self.num_rows and 0 <= nc < self.num_cols):
+                    continue
+                if self._room_group(nr, nc) != group:
+                    continue
+                if (nr, nc) == goal:
+                    return dist + 1
+                visited.add((nr, nc))
+                q.append(((nr, nc), dist + 1))
+        return None
+
+    def _outside_room_neighbors(self, group_to_avoid):
+        for row in range(self.num_rows):
+            for col in range(self.num_cols):
+                if self._room_group(row, col) == group_to_avoid:
+                    continue
+                for d in 'nesw':
+                    far_group, _far_cell = self._far_side(row, col, d)
+                    if far_group == self._OUTSIDE and self.get_wall(row, col, d) in ('air', 'door'):
+                        yield (row, col)
+
+    def _graph_distance_avoiding_room(self, start, goal, group_to_avoid):
+        """BFS distance from `start` to `goal` (each either a cell or
+        _OUTSIDE) over the walkable graph, with every cell in
+        `group_to_avoid` removed -- None if unreachable."""
+        if start == goal:
+            return 0
+        from collections import deque
+        visited = {start}
+        q = deque([(start, 0)])
+        while q:
+            node, dist = q.popleft()
+            if node == self._OUTSIDE:
+                neighbors = self._outside_room_neighbors(group_to_avoid)
+            else:
+                row, col = node
+                neighbors = []
+                for d in 'nesw':
+                    far_group, far_cell = self._far_side(row, col, d)
+                    if far_group == group_to_avoid or self.get_wall(row, col, d) not in ('air', 'door'):
+                        continue
+                    neighbors.append(self._OUTSIDE if far_group == self._OUTSIDE else far_cell)
+            for nbr in neighbors:
+                if nbr in visited:
+                    continue
+                if nbr == goal:
+                    return dist + 1
+                visited.add(nbr)
+                q.append((nbr, dist + 1))
+        return None
+
+    def _is_redundant_door_pair(self, group, cell_a, ext_group_a, ext_cell_a, cell_b, ext_group_b, ext_cell_b):
+        inside = self._room_interior_distance(group, cell_a, cell_b)
+        if inside is None:
+            return False   # not actually connected through the room -- nothing to compare
+        inside_path = inside + 2   # +1 to step through each door
+        start = self._OUTSIDE if ext_group_a == self._OUTSIDE else ext_cell_a
+        goal = self._OUTSIDE if ext_group_b == self._OUTSIDE else ext_cell_b
+        outside_path = self._graph_distance_avoiding_room(start, goal, group)
+        if outside_path is None:
+            return False   # no route around at all -- definitely useful
+        return (outside_path - inside_path) < self._DOOR_USEFULNESS_MARGIN
+
+    def _would_create_redundant_door(self, row, col, d):
+        """True if (row, col, d) as a door would form (or, if it already
+        exists, still forms) a redundant pair (see _is_redundant_door_pair)
+        with another door on either room it connects. Safe to call both
+        before placement (checking a candidate) and after (re-checking an
+        existing door, e.g. from _prune_redundant_doors) -- the self-match
+        skip compares the full boundary identity, not just the room-side
+        cell, so it can't also skip a genuinely different door that happens
+        to share that same cell."""
+        near_group = self._room_group(row, col)
+        far_group, far_cell = self._far_side(row, col, d)
+        for group, cell, ext_group, ext_cell in ((near_group, (row, col), far_group, far_cell),
+                                                   (far_group, far_cell, near_group, (row, col))):
+            for (other_cell, other_ext_group, other_ext_cell) in self._doors_touching_group(group):
+                if other_cell == cell and other_ext_group == ext_group and other_ext_cell == ext_cell:
+                    continue   # this exact same boundary, not a different one sharing the cell
+                if self._is_redundant_door_pair(group, cell, ext_group, ext_cell,
+                                                other_cell, other_ext_group, other_ext_cell):
+                    return True
+        return False
 
     def _add_extra_doors(self, rng=None, probability=0.2):
         """After connectivity is guaranteed, probabilistically open additional
         'wall' boundaries between two walkable cells into 'door' -- liberal
         doorways beyond the bare reachability minimum, for visual variety
-        (their eroded lintels look good after decay_texture)."""
+        (their eroded lintels look good after decay_texture). Skips any
+        candidate that's already redundant against the doors that exist at
+        the time it's considered (see _would_create_redundant_door) -- a
+        final cleanup pass over every door, run once by gen_rooms after this
+        (_prune_redundant_doors), catches whatever this per-candidate check
+        can't: adding doors elsewhere later in this same sweep can shorten a
+        detour enough to make an earlier, previously-fine pair redundant in
+        hindsight, and the same can happen across the boundary between
+        ensure_connectivity's doors and these ones."""
         rng = rng or random
         if probability <= 0:
             return
@@ -722,8 +886,49 @@ class Maze:
                         continue
                     if not self._is_walkable_state(self.rooms[nr][nc]):
                         continue
-                    if self.get_wall(row, col, d) == 'wall' and rng.random() < probability:
+                    if self.get_wall(row, col, d) == 'wall' and rng.random() < probability \
+                       and not self._would_create_redundant_door(row, col, d):
                         self.set_wall(row, col, d, 'door')
+
+    def _prune_redundant_doors(self):
+        """Final cleanup over every door between two walkable cells (this
+        deliberately excludes the building's entrance and lustral-basin
+        doors, which are single fixed structural features, not part of the
+        liberal-connectivity door pool): revert any still-redundant one
+        (see _would_create_redundant_door), as long as doing so doesn't
+        disconnect the maze -- a door ensure_connectivity placed because it
+        was the only route at the time can become genuinely optional once
+        other doors (from ensure_connectivity's own later merges or from
+        _add_extra_doors) open up an alternate way around, so this is checked
+        fresh against the network's final state rather than trusting
+        whichever mechanism placed each door to have gotten it right forever.
+        Removing a door only ever makes other pairs *more* useful (any route
+        around a room gets longer or stays the same, never shorter), so this
+        greedily converges."""
+        candidates = []
+        for row in range(self.num_rows):
+            for col in range(self.num_cols):
+                if not self._is_walkable_state(self.rooms[row][col]):
+                    continue
+                for d in ('e', 's'):
+                    nr, nc = Maze.step(row, col, d)
+                    if 0 <= nr < self.num_rows and 0 <= nc < self.num_cols \
+                       and self._is_walkable_state(self.rooms[nr][nc]):
+                        candidates.append((row, col, d))
+
+        changed = True
+        while changed:
+            changed = False
+            for (row, col, d) in candidates:
+                if self.get_wall(row, col, d) != 'door':
+                    continue
+                if not self._would_create_redundant_door(row, col, d):
+                    continue
+                self.set_wall(row, col, d, 'wall')
+                if len(self._walkable_components()) > 1:
+                    self.set_wall(row, col, d, 'door')   # was still needed -- put it back
+                else:
+                    changed = True
 
     def footprint_area(self):
         return sum(1 for row in self.rooms for v in row if v != 0)
@@ -812,6 +1017,7 @@ class Maze:
 
         self.ensure_connectivity(rng=rng, is_ground_floor=is_ground_floor)
         self._add_extra_doors(rng=rng, probability=door_probability)
+        self._prune_redundant_doors()
 
         if forced_cells:
             for (r, c) in forced_cells:
@@ -1196,6 +1402,26 @@ def _random_subfootprint(allowed_cells, must_include, rng, coverage=0.6):
     return result
 
 
+def _find_hatch_block(top, size, rng):
+    """Find a size x size block of hatch-eligible cells (unassigned corridor
+    or explicit-room cells) on `top`. A single maze cell is only as wide as
+    room_size voxels, which shrinks to almost nothing at small room_size --
+    so the roof hatch spans a block of cells instead of just one, and this
+    shrinks the requested block size down to whatever actually fits the
+    floor's footprint (down to 1x1) rather than failing outright."""
+    for s in range(size, 0, -1):
+        candidates = []
+        for r in range(top.num_rows - s + 1):
+            for c in range(top.num_cols - s + 1):
+                block = [(rr, cc) for rr in range(r, r + s) for cc in range(c, c + s)]
+                if all(top.rooms[rr][cc] == 1 or 2 <= top.rooms[rr][cc] <= 8 for rr, cc in block):
+                    candidates.append((r, c))
+        if candidates:
+            r, c = rng.choice(candidates)
+            return {(rr, cc) for rr in range(r, r + s) for cc in range(c, c + s)}
+    return set()
+
+
 class Building:
     """Orchestrates 1-2 Maze floors + inter-floor stairs + roof access, ready
     for PositionGrid.fromBuilding. Deliberately capped at 2 floors (ground +
@@ -1214,7 +1440,7 @@ class Building:
 
     def generate(self, *, shape="random", entrance_sides=('s', 'e'),
                  floor2_area_threshold=50, stair_length=3,
-                 roof_access="auto", rng_seed=None, **gen_rooms_kwargs):
+                 roof_access="auto", roof_hatch_cells=1, rng_seed=None, **gen_rooms_kwargs):
         rng = random.Random(rng_seed) if rng_seed is not None else random
 
         ground = Maze(self.num_rows, self.num_cols)
@@ -1227,12 +1453,21 @@ class Building:
                 row, col, direction = site
                 state_base = ground.unused_stair_state(direction)
                 ground.make_stairs(row, col, direction, length=stair_length, state_value=state_base)
-                landing = (row, col)
+                flight_cells = [(row, col)]
                 for _ in range(stair_length - 1):
-                    landing = Maze.step(*landing, direction)
+                    flight_cells.append(Maze.step(*flight_cells[-1], direction))
+                landing = flight_cells[-1]
 
                 upper = Maze(self.num_rows, self.num_cols)
                 allowed = _random_subfootprint(ground.footprint_cells(), {landing}, rng)
+                # The rest of the flight (every cell but the landing) must
+                # stay out of floor2's footprint entirely, not just its floor
+                # slab -- otherwise floor2 generates its own independent room
+                # layout there, including walls that have nothing to do with
+                # the stairs below and can cut straight across the flight
+                # (fromBuilding's omit_floor_cells alone only removes the
+                # slab, not any walls floor2 places on top of it).
+                allowed -= set(flight_cells) - {landing}
                 # Lustral basins are a ground-floor-only feature (sunken pits
                 # accessed via one fixed door); only light shafts punch
                 # through to upper floors.
@@ -1240,15 +1475,22 @@ class Building:
                 upper.gen_rooms(shape=shape, entrance_sides=entrance_sides,
                                 entrance_cell=landing, allowed_cells=allowed,
                                 forced_cells={landing}, rng=rng, **upper_kwargs)
+                # contain_maze() (inside gen_rooms) walls the landing in like
+                # any other footprint edge, since the rest of the flight was
+                # just excluded from floor2's footprint -- that seals the
+                # stairwell shut exactly where it needs to open into the
+                # landing. Breach that one boundary back open.
+                if len(flight_cells) > 1:
+                    upper.set_wall(*landing, direction=opposite[direction], type='air')
                 self.floors.append(upper)
-                self.stair_links.append({'from_floor': 0, 'to_floor': 1,
-                                          'landing': landing, 'state_base': state_base})
+                self.stair_links.append({'from_floor': 0, 'to_floor': 1, 'landing': landing,
+                                          'flight_cells': set(flight_cells), 'state_base': state_base})
 
         self.roof_floor_index = len(self.floors) - 1
-        self._place_roof_access(roof_access, rng)
+        self._place_roof_access(roof_access, roof_hatch_cells, rng)
         return self
 
-    def _place_roof_access(self, mode, rng):
+    def _place_roof_access(self, mode, roof_hatch_cells, rng):
         top = self.floors[self.roof_floor_index]
         if mode == "auto":
             mode = rng.choice(("stairs", "hatch"))
@@ -1266,8 +1508,6 @@ class Building:
                 return
             mode = "hatch"   # fall back if no straight run available
         if mode == "hatch":
-            candidates = [(r, c) for r in range(top.num_rows) for c in range(top.num_cols)
-                          if top.rooms[r][c] == 1 or 2 <= top.rooms[r][c] <= 8]
-            if candidates:
-                self.roof_open_cells.add(rng.choice(candidates))
+            block = _find_hatch_block(top, roof_hatch_cells, rng)
+            self.roof_open_cells |= block
 
