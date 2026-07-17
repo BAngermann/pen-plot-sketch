@@ -152,6 +152,63 @@ class TestRoofAccessModes(unittest.TestCase):
                      not in g.all_occupied_positions]
         self.assertEqual(set(open_cells), b.roof_open_cells)
 
+    def test_hatch_keeps_a_margin_from_its_own_walls(self):
+        # A hatch's cell(s) must be capped normally (with real walls) first,
+        # then have a *smaller* void carved out -- inset by at least
+        # wall_thickness + 1 from the block's own outer edge on every side --
+        # rather than the whole cell being excluded from the cap outright
+        # (which used to leave no margin at all, and could even leave the
+        # opening overlapping the neighboring cells' own wall footprint).
+        random.seed(2)
+        b = Building(9, 9).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                    floor2_area_threshold=10**9, roof_access="hatch",
+                                    place_shafts=False)
+        self.assertEqual(len(b.roof_open_cells), 1, b.roof_open_cells)
+        room_size, wall_thickness, wall_height, floor_thickness = 6, 2, 8, 2
+        g = PositionGrid(9, 9, floor_thickness + wall_height)
+        g.fromBuilding(b, room_size=room_size, wall_thickness=wall_thickness,
+                       wall_height=wall_height, floor_thickness=floor_thickness)
+        roof_level = floor_thickness + wall_height
+        cell_size = room_size + wall_thickness
+        row, col = next(iter(b.roof_open_cells))
+        margin = wall_thickness + 1
+        xmin, xmax = row * cell_size, (row + 1) * cell_size
+        ymin, ymax = col * cell_size, (col + 1) * cell_size
+        for x in range(xmin, xmax):
+            for y in range(ymin, ymax):
+                near_edge = (x < xmin + margin or x >= xmax - margin
+                            or y < ymin + margin or y >= ymax - margin)
+                if not near_edge:
+                    continue
+                with self.subTest(x=x, y=y):
+                    self.assertIn((x, y, roof_level), g.all_occupied_positions,
+                                 "cap must remain solid within the margin band around the void")
+
+    def test_hatch_still_opens_when_too_small_for_the_full_margin(self):
+        # At a small room_size, a single cell isn't wide enough for a full
+        # wall_thickness + margin inset on both sides at once -- this must
+        # degrade to a smaller margin (or none) rather than silently leaving
+        # no opening in the roof at all.
+        for room_size in (2, 3, 4):
+            with self.subTest(room_size=room_size):
+                random.seed(2)
+                b = Building(9, 9).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                            floor2_area_threshold=10**9, roof_access="hatch",
+                                            place_shafts=False)
+                self.assertEqual(len(b.roof_open_cells), 1, b.roof_open_cells)
+                wall_thickness, wall_height, floor_thickness = 2, 8, 2
+                g = PositionGrid(9, 9, floor_thickness + wall_height)
+                g.fromBuilding(b, room_size=room_size, wall_thickness=wall_thickness,
+                               wall_height=wall_height, floor_thickness=floor_thickness)
+                roof_level = floor_thickness + wall_height
+                cell_size = room_size + wall_thickness
+                row, col = next(iter(b.roof_open_cells))
+                xmin, xmax = row * cell_size, (row + 1) * cell_size
+                ymin, ymax = col * cell_size, (col + 1) * cell_size
+                any_open = any((x, y, roof_level) not in g.all_occupied_positions
+                               for x in range(xmin, xmax) for y in range(ymin, ymax))
+                self.assertTrue(any_open, "hatch must still carve some opening even without room for the full margin")
+
     def test_roof_access_hatch_spans_a_multi_cell_block_when_requested(self):
         # A single maze cell is only room_size voxels wide, which can be tiny
         # at small room_size -- roof_hatch_cells lets the hatch span a solid

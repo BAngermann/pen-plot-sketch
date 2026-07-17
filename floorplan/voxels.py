@@ -638,8 +638,20 @@ class PositionGrid:
                       for cell in link['flight_cells'] - {link['landing']}}
         shaft_top = {(r, c) for r in range(top.num_rows) for c in range(top.num_cols)
                     if 9 <= top.rooms[r][c] <= 12}
-        cap_cells = (top.footprint_cells() | stair_voids) - shaft_top - building.roof_open_cells
+        # A roof-access *stairway*'s landing needs the full cell width for
+        # headroom (same reasoning as an inter-floor stair flight), so it's
+        # still excluded from the cap outright. A plain hatch has no such
+        # requirement -- cap its cell(s) normally, with real walls, then
+        # carve a smaller void out of that cap afterward so the opening
+        # keeps a clear margin from those walls instead of running right up
+        # against (or, before, past) them.
+        is_hatch = bool(building.roof_open_cells) and building.roof_stair_state is None
+        exclude_from_cap = set() if is_hatch else building.roof_open_cells
+        cap_cells = (top.footprint_cells() | stair_voids) - shaft_top - exclude_from_cap
         self._fill_floor_slab(top, room_size, wall_thickness, roof_thickness, roof_level, cap_cells)
+        if is_hatch:
+            self._carve_hatch_void(building.roof_open_cells, room_size, wall_thickness,
+                                   roof_thickness, roof_level)
 
         if len(building.floors) > 1:
             ground, upper = building.floors[0], building.floors[1]
@@ -660,6 +672,31 @@ class PositionGrid:
                 # cap, or there's a gap between the wall-top and the parapet.
                 self._build_parapet(ground, upper, terrace, room_size, wall_thickness,
                                     roof_thickness + parapet_height, terrace_level)
+
+    def _carve_hatch_void(self, cells, room_size, wall_thickness, thickness, z0, margin=1):
+        """Remove a smaller void from an already-capped roof slab, inset by
+        wall_thickness + margin from the full bounding box of `cells` (a
+        hatch's maze-cell block, already normally capped with real walls) on
+        every side -- so the opening keeps a clear margin from the block's
+        own walls instead of running flush against (or, before this,
+        overlapping) them. At a small room_size, a single cell (or even a
+        small block) may not be wide enough for the full wall_thickness +
+        margin inset on both sides at once -- rather than silently carving
+        no opening at all, this shrinks the inset step by step until
+        something fits; some void closer to the walls than ideal beats none.
+        Only truly degenerate cases (a cell narrower than 2 voxels) end up
+        with nothing carved at all."""
+        cell_size = room_size + wall_thickness
+        rows = [r for r, _c in cells]
+        cols = [c for _r, c in cells]
+        x0_base, x1_base = min(rows) * cell_size, (max(rows) + 1) * cell_size
+        y0_base, y1_base = min(cols) * cell_size, (max(cols) + 1) * cell_size
+        for inset in range(wall_thickness + margin, 0, -1):
+            x0, x1 = x0_base + inset, x1_base - inset
+            y0, y1 = y0_base + inset, y1_base - inset
+            if x1 > x0 and y1 > y0:
+                self.clear_box(x0, x1, y0, y1, z0, z0 + thickness)
+                return
 
     def _build_parapet(self, ground, upper, terrace_cells, room_size, wall_thickness, parapet_height, z0):
         cell_size = room_size + wall_thickness
