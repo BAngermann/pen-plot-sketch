@@ -245,6 +245,34 @@ class TestInterFloorStairHeadroom(unittest.TestCase):
                 self.assertNotIn((cx, cy, floor1_ceiling_z), g.all_occupied_positions,
                                  "floor above must be open over the whole flight, not just the landing")
 
+    def test_flight_is_capped_at_the_roof_not_open_to_the_sky(self):
+        """Regression test: the stair flight's non-landing cells are excluded
+        from floor2's own footprint entirely (for headroom -- see the test
+        above), which used to also drop them out of the roof cap, leaving
+        the stairwell open all the way from the ground floor through the
+        roof to the sky instead of being closed off at floor2's own ceiling
+        like any other floor2 space."""
+        random.seed(4)
+        stair_length = 3
+        b = Building(11, 11).generate(shape="rectangular", entrance_sides=('s', 'e'),
+                                      floor2_area_threshold=20, stair_length=stair_length)
+        self.assertEqual(len(b.floors), 2, "test needs floor2 to be generated")
+        link = b.stair_links[0]
+
+        room_size, wall_thickness, wall_height, floor_thickness = 6, 2, 8, 3
+        g = PositionGrid(11, 11, wall_height)
+        g.fromBuilding(b, room_size=room_size, wall_thickness=wall_thickness,
+                       wall_height=wall_height, floor_thickness=floor_thickness)
+
+        cell_size = room_size + wall_thickness
+        roof_level = 2 * (floor_thickness + wall_height)
+        for (row, col) in link['flight_cells']:
+            cx = row * cell_size + wall_thickness + room_size // 2
+            cy = col * cell_size + wall_thickness + room_size // 2
+            with self.subTest(cell=(row, col)):
+                self.assertIn((cx, cy, roof_level), g.all_occupied_positions,
+                             "the stair shaft must be capped at the roof, not left open to the sky")
+
 
 if __name__ == "__main__":
     unittest.main()

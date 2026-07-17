@@ -625,20 +625,28 @@ class PositionGrid:
         top = building.floors[building.roof_floor_index]
         roof_level = (floor_levels[building.roof_floor_index]
                      + thicknesses[building.roof_floor_index] + wall_height)
+        # A stair flight's non-landing cells are excluded from floor2's own
+        # footprint entirely (see Building.generate) -- no rooms, walls, or
+        # floor slab of floor2's own -- so the stairwell has proper headroom
+        # climbing from the ground floor. But that also drops them out of
+        # top.footprint_cells(), which would otherwise leave the roof wide
+        # open above the *entire* flight (not just the landing) instead of
+        # just the single landing cell it's meant to breach: the shaft needs
+        # its own roof cap at the top like any other floor2 space, closing
+        # it off at the ceiling instead of leaving it open to the sky.
+        stair_voids = {cell for link in building.stair_links if link['to_floor'] == building.roof_floor_index
+                      for cell in link['flight_cells'] - {link['landing']}}
         shaft_top = {(r, c) for r in range(top.num_rows) for c in range(top.num_cols)
                     if 9 <= top.rooms[r][c] <= 12}
-        cap_cells = top.footprint_cells() - shaft_top - building.roof_open_cells
+        cap_cells = (top.footprint_cells() | stair_voids) - shaft_top - building.roof_open_cells
         self._fill_floor_slab(top, room_size, wall_thickness, roof_thickness, roof_level, cap_cells)
 
         if len(building.floors) > 1:
             ground, upper = building.floors[0], building.floors[1]
-            # A stair flight's non-landing cells are excluded from floor2's
-            # own footprint (see Building.generate), so they fall out as
-            # "terrace" too -- ground floor roof it doesn't cover -- and
-            # would otherwise get capped right back over, sealing the
-            # stairwell the same way an uncapped floor slab alone couldn't.
-            stair_voids = {cell for link in building.stair_links if link['to_floor'] == 1
-                          for cell in link['flight_cells'] - {link['landing']}}
+            # These same stair-void cells also fall out as ground-floor
+            # "terrace" (roof it doesn't cover) -- exclude them there too, or
+            # the terrace cap would seal the stairwell shut a second time,
+            # this time right above the ground floor instead of at the roof.
             terrace = ground.terrace_cells(upper) - stair_voids
             if terrace:
                 terrace_level = floor_levels[1]   # top of the ground floor == where floor 1 starts
