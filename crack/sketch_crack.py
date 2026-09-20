@@ -2,6 +2,7 @@ import heapq
 import math
 import pathlib
 import sys
+from collections import deque
 
 import vsketch
 
@@ -44,6 +45,13 @@ class CrackSketch(vsketch.SketchClass):
     # Anything vsk.size() accepts as a single string: a known page name (a4,
     # letter, ...) or an explicit "WxH" spec with units, e.g. "10cmx10cm".
     page_size = vsketch.Param("a4")
+    # Widening passes; each pass removes one box adjacent to the crack's
+    # current outer edge, left or right per widen_left_prob. 0 = no widening.
+    widen_iterations = vsketch.Param(1, min_value=0, max_value=4)
+    widen_left_prob = vsketch.Param(0.5, min_value=0.0, max_value=1.0, decimals=2)
+    # Widening can enclose shards that lose every connection (through
+    # surviving neighbours) to the left or right boundary; drop those too.
+    remove_islands = vsketch.Param(True)
     # Symmetric page margins in CENTIMETRES.  NOTE: no unit="cm" here — a unit=
     # Param returns pixels (cm×37.8), which would corrupt the cm scale maths.
     margin_x = vsketch.Param(1.0, min_value=0, decimals=2)   # left/right, cm
@@ -131,18 +139,15 @@ class CrackSketch(vsketch.SketchClass):
         down to a random box sharing the current box's bottom edge, deleting
         each, until the bottom edge of the page is reached.
 
-        A long crack (more than 5 rows) is then widened: for each crack box a
-        uniform draw in [0, 0.25] drops the box to its left, one in [0.75, 1]
-        drops the box to its right, and anything in between does nothing.  A
-        neighbour already deleted (e.g. from a row above) is left as-is.
+        The crack is then widened over ``widen_iterations`` passes (see
+        :meth:`_widen_crack`) and, if ``remove_islands`` is set, any shard left
+        disconnected from both page boundaries is dropped too (see
+        :meth:`_remove_islands`).
         """
         eps = 1e-6
 
         def overlap(a, b):
             return min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
-
-        def yoverlap(a, b):
-            return min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
 
         top = [i for i, b in enumerate(boxes) if b[1] < eps]
         if not top:
@@ -171,25 +176,97 @@ class CrackSketch(vsketch.SketchClass):
                 break
             cur = below[int(vsk.random(len(below)))]
 
-        if len(chain) > 5:
-            for ci in chain:
+        self._widen_crack(vsk, boxes, deleted, chain)
+        if self.remove_islands:
+            self._remove_islands(boxes, deleted)
+        return deleted
+
+    def _widen_crack(self, vsk, boxes, deleted, chain):
+        """Widen the crack in place over ``self.widen_iterations`` passes.
+
+        Each pass walks the crack's current outer edge (the chain on the
+        first pass, the boxes added by the previous pass thereafter) and, for
+        every box on that edge, deletes one adjacent box: the left neighbour
+        with probability ``widen_left_prob``, otherwise the right neighbour.
+        A neighbour already deleted is left as-is and does not extend the
+        edge further. With 0 iterations the crack is left at its original
+        (unwidened) width.
+        """
+        eps = 1e-6
+
+        def yoverlap(a, b):
+            return min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+
+        edge = list(chain)
+        for _ in range(int(self.widen_iterations)):
+            next_edge = []
+            for ci in edge:
                 b = boxes[ci]
-                x = vsk.random(1)
-                if x < 0.25:          # left neighbour: its right edge meets ours
-                    on_edge = lambda c: abs(c[0] + c[2] - b[0]) < eps
-                elif x >= 0.75:       # right neighbour: its left edge meets ours
-                    on_edge = lambda c: abs(c[0] - (b[0] + b[2])) < eps
+                if vsk.random(1) < self.widen_left_prob:
+                    on_edge = lambda c: abs(c[0] + c[2] - b[0]) < eps  # left: its right edge meets ours
                 else:
-                    continue
+                    on_edge = lambda c: abs(c[0] - (b[0] + b[2])) < eps  # right: its left edge meets ours
                 cand = [i for i, c in enumerate(boxes)
                         if on_edge(c) and yoverlap(b, c) > eps]
                 if not cand:
                     continue
                 # "the" neighbour = the one bordering our edge the most
                 pick = max(cand, key=lambda i: yoverlap(b, boxes[i]))
-                if pick not in deleted:   # already gone from a row above -> nothing
+                if pick not in deleted:
                     deleted.add(pick)
-        return deleted
+                    next_edge.append(pick)
+            edge = next_edge
+            if not edge:
+                break
+
+    def _remove_islands(self, boxes, deleted):
+        """Drop surviving shards unreachable, through surviving neighbours,
+        from the left (x=0) or right (x=box_width) page boundary.
+
+        Widening can nibble away at the boxes around a shard until it is
+        fully enclosed by deleted boxes; left alone, that shard would plot as
+        a fragment floating inside the crack. Reachability is flood-filled on
+        a unit grid rasterised from the surviving boxes -- guillotine splits
+        keep every box on an integer grid, so this is exact -- which stays
+        fast regardless of the box count since it scales with page area, not
+        shard count.
+        """
+        w, h = int(round(self.box_width)), int(round(self.box_height))
+        owner = [-1] * (w * h)
+        for i, (bx, by, bw, bh) in enumerate(boxes):
+            if i in deleted:
+                continue
+            x0, x1 = int(round(bx)), int(round(bx + bw))
+            y0, y1 = int(round(by)), int(round(by + bh))
+            for y in range(y0, y1):
+                row = y * w
+                owner[row + x0:row + x1] = [i] * (x1 - x0)
+
+        visited = bytearray(w * h)
+        queue = deque()
+
+        def seed(x, y):
+            idx = y * w + x
+            if owner[idx] >= 0 and not visited[idx]:
+                visited[idx] = 1
+                queue.append(idx)
+
+        for y in range(h):
+            seed(0, y)
+            seed(w - 1, y)
+
+        while queue:
+            idx = queue.popleft()
+            x, y = idx % w, idx // w
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < w and 0 <= ny < h:
+                    nidx = ny * w + nx
+                    if owner[nidx] >= 0 and not visited[nidx]:
+                        visited[nidx] = 1
+                        queue.append(nidx)
+
+        deleted.update(owner[i] for i in range(w * h)
+                       if owner[i] >= 0 and not visited[i])
 
     def _palette(self, colors):
         """Selected fill colours (hex), truncated at the first 'none' slot."""

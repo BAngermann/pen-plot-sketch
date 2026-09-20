@@ -23,10 +23,15 @@ Run with `vsk run` from this directory (the sketch adds the repo root to
    delete it, then step down to a random shard sharing its bottom edge and delete
    that too, repeating until the bottom edge of the page is reached. The deleted
    chain is a connected fissure from top to bottom (its exact route varies with
-   the seed). If the crack runs more than 5 rows it is **widened**: at each row a
-   uniform draw drops the shard immediately left of the crack (probability ¼),
-   the shard immediately right (probability ¼), or neither (½) — skipping any
-   neighbour already removed by a row above, so the fissure gains a ragged edge.
+   the seed). The crack is then optionally **widened** over `widen_iterations`
+   passes: each pass walks the crack's current outer edge and, for every shard on
+   it, deletes one neighbouring shard — left with probability `widen_left_prob`,
+   otherwise right — so the fissure grows a ragged edge (a neighbour already
+   deleted is left as-is and doesn't extend the edge further). Widening can
+   occasionally nibble away every neighbour of some shard, cutting it off from
+   both page edges; if `remove_islands` is on, one final pass finds and drops
+   any such **islands** (checked by flood-filling from the left and right page
+   boundaries through surviving shards).
 3. **Fill + outline + colour.** Each surviving shard becomes a polygon filled
    with a random palette colour (`solid`) or left empty (`none`); an optional
    outline is drawn on top, and a vpype `color` command assigns the per-layer
@@ -51,6 +56,12 @@ reproduce or reshuffle a result; each fresh run without pinning the seed varies.
   (portrait; default `a4`). Either a known page name (`a6`, `a5`, `a4`, `a3`,
   `a2`, `a1`, `a0`, `letter`, `legal`, `executive`, `tabloid`) or an explicit
   `WxH` spec with units, e.g. `10cmx10cm`.
+- `widen_iterations` — number of crack-widening passes, `0`–`4` (default `1`;
+  `0` leaves the crack at its unwidened, single-shard-wide route).
+- `widen_left_prob` — probability, `0`–`1` (default `0.5`), that a given
+  widening pick grows the crack to the **left** rather than the right.
+- `remove_islands` — drop shards left disconnected from both page boundaries by
+  widening (default `on`).
 - `margin_x`, `margin_y` — symmetric left/right and top/bottom page margins in
   **centimetres** (default `1.0`). The figure is scaled to fit the chosen
   `page_size` (portrait) minus the margins; because the page and figure aspect
