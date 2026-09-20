@@ -47,11 +47,15 @@ reproduce or reshuffle a result; each fresh run without pinning the seed varies.
 - `area_threshold` — stop splitting when the largest box is smaller than this.
 - `split_lambda` — Poisson rate for cut placement (higher → cuts closer to an
   edge → more size contrast).
+- `page_size` — page format string passed straight to vsketch's `size()`
+  (portrait; default `a4`). Either a known page name (`a6`, `a5`, `a4`, `a3`,
+  `a2`, `a1`, `a0`, `letter`, `legal`, `executive`, `tabloid`) or an explicit
+  `WxH` spec with units, e.g. `10cmx10cm`.
 - `margin_x`, `margin_y` — symmetric left/right and top/bottom page margins in
-  **centimetres** (default `1.0`). The figure is scaled to fit A4 portrait
-  (21 × 29.7 cm) minus the margins; because the page and figure aspect ratios
-  differ, the tighter axis lands exactly on its requested margin and the other
-  axis ends up with a larger one.
+  **centimetres** (default `1.0`). The figure is scaled to fit the chosen
+  `page_size` (portrait) minus the margins; because the page and figure aspect
+  ratios differ, the tighter axis lands exactly on its requested margin and the
+  other axis ends up with a larger one.
 - `pen_width` — pen width in mm (default `0.3`); also the line width in the GUI
   preview.
 

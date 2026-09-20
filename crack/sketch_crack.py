@@ -19,6 +19,10 @@ COLOR_CHOICES = ["none"] + PEN_NAMES
 # Solid-only sketch: either a solid fill or no fill at all (outline / gap).
 FILL_CHOICES = ["none", "solid"]
 
+# CSS pixels per centimetre (96 px/in / 2.54 cm/in) -- used to read the page
+# size (in px, via vsk.width/vsk.height) back into the sketch's cm scale.
+PX_PER_CM = 96 / 2.54
+
 # Show colour swatches next to pen names in the GUI dropdowns (GUI-only no-op).
 install_swatches(PENS)
 
@@ -37,6 +41,9 @@ class CrackSketch(vsketch.SketchClass):
     box_height = vsketch.Param(270, min_value=2)
     area_threshold = vsketch.Param(10, min_value=1)
     split_lambda = vsketch.Param(1.0, min_value=0.5)
+    # Anything vsk.size() accepts as a single string: a known page name (a4,
+    # letter, ...) or an explicit "WxH" spec with units, e.g. "10cmx10cm".
+    page_size = vsketch.Param("a4")
     # Symmetric page margins in CENTIMETRES.  NOTE: no unit="cm" here — a unit=
     # Param returns pixels (cm×37.8), which would corrupt the cm scale maths.
     margin_x = vsketch.Param(1.0, min_value=0, decimals=2)   # left/right, cm
@@ -209,12 +216,12 @@ class CrackSketch(vsketch.SketchClass):
         return True
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
-        vsk.size("a4", landscape=False)
+        vsk.size(self.page_size, landscape=False)
         vsk.penWidth(self.pen_width)  # Param unit="mm" -> value already in px
 
         # Fit the figure to the page minus margins; the tighter axis binds, so
         # the requested margins are a lower bound (the other axis gets more).
-        page_w, page_h = 21.0, 29.7  # A4 portrait, cm
+        page_w, page_h = vsk.width / PX_PER_CM, vsk.height / PX_PER_CM  # cm
         scale = min((page_w - 2 * self.margin_x) / self.box_width,
                     (page_h - 2 * self.margin_y) / self.box_height)
         vsk.scale("cm")
@@ -224,7 +231,7 @@ class CrackSketch(vsketch.SketchClass):
         deleted = self._crack_path(vsk, final_boxes)
         crack_boxes = [final_boxes[i] for i in deleted]
 
-        # Center on A4 portrait, expressed in box units.
+        # Center on the page (portrait), expressed in box units.
         ox = (page_w / scale - self.box_width) / 2
         oy = (page_h / scale - self.box_height) / 2
 
