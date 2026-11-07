@@ -1,6 +1,7 @@
 import pathlib
 import sys
 
+import vpype as vp
 import vsketch
 import numpy as np
 
@@ -49,15 +50,31 @@ class LsysSketch(vsketch.SketchClass):
     color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
     color_7 = vsketch.Param("none", choices=COLOR_CHOICES)
 
-    # A4 portrait page dimensions in cm, used to centre the drawing.
-    PAGE_W_CM = 21.0
-    PAGE_H_CM = 29.7
+    # How pens are assigned: "instance" cycles the palette across the instance
+    # layers; "symbol" lets the string pick the pen via the ' / " colour-index
+    # symbols (index mod number of selected pens), starting at ColorStart.
+    color_mode = vsketch.Param("instance", choices=["instance", "symbol"])
+    ColorStart = vsketch.Param(0)
+
+    # Stroke weight = number of parallel pen lines per segment (vsketch
+    # strokeWeight); pen_width (mm) is the spacing between them.
+    StrokeWeight = vsketch.Param(1, min_value=1)
+    pen_width = vsketch.Param(0.3, min_value=0.01, decimals=2)
+    # Pull each end of a stroke in by the amount the extra weight adds there, so
+    # a heavy stroke keeps its nominal length instead of poking out past its ends.
+    shorten_strokes = vsketch.Param(False)
+    page_size = vsketch.Param("a4")
+    landscape = vsketch.Param(False)
 
     def draw(self, vsk: vsketch.Vsketch) -> None:
         # center=False disables vsketch's automatic centring; we place the
         # drawing ourselves (centre on the page, then apply the global offset).
-        vsk.size("a4", landscape=False, center=False)
+        vsk.size(self.page_size, landscape=self.landscape, center=False)
         vsk.scale("cm")
+        # Page dimensions in cm, used to centre the drawing.
+        px_per_cm = vp.convert_length("1cm")
+        page_w_cm = vsk.width / px_per_cm
+        page_h_cm = vsk.height / px_per_cm
         state = self.Axiom
         for i in range(self.iterations):
             newstate = ""
@@ -106,35 +123,64 @@ class LsysSketch(vsketch.SketchClass):
         all_pts = np.vstack([self._endpoints(s) for s in instances if s])
         if len(all_pts):
             center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
-            offset = np.array([self.PAGE_W_CM / 2 + self.GlobalTranslateX,
-                               self.PAGE_H_CM / 2 + self.GlobalTranslateY])
+            offset = np.array([page_w_cm / 2 + self.GlobalTranslateX,
+                               page_h_cm / 2 + self.GlobalTranslateY])
             R = self._rotate(self.GlobalRotation)[:2, :2]
             t = offset - R @ center
             instances = [self._transform(s, R, t) for s in instances]
 
-        # Draw each instance on its own layer, then linemerge only within that
-        # layer (--no-flip preserves segment direction). Keeping instances on
+        # Each instance gets its own layer(s), then linemerge runs only within
+        # a layer (--no-flip preserves segment direction). Keeping instances on
         # separate layers/passes lets the ink dry instead of piling overlapping
-        # strokes in the same spot.
+        # strokes in the same spot. In "symbol" colour mode an instance is
+        # further split into one layer per pen, chosen by the colour index.
         palette = self._palette()
+        by_symbol = self.color_mode == "symbol" and bool(palette)
+        n_slots = len(palette) if by_symbol else 1
+        vsk.penWidth(f"{self.pen_width}mm")
+        pen_cm = self.pen_width / 10
         for i, segments in enumerate(instances):
-            layer = i + 1
-            vsk.stroke(layer)
-            for (x0, y0), (x1, y1) in segments:
-                vsk.line(x0, y0, x1, y1)
-            vsk.vpype(f"linemerge --no-flip --layer {layer}")
-            # Cycle the selected pens across layers; with no pens selected, fall
-            # back to black at 30% opacity (alpha 0x4D) so overlaps read faint.
-            color = palette[i % len(palette)] if palette else "#0000004d"
-            vsk.vpype(f'color --layer {layer} "{color}"')
+            for slot in range(n_slots):
+                if by_symbol:
+                    group = [sg for sg in segments if sg[3] % n_slots == slot]
+                    layer = i * n_slots + slot + 1
+                    color = palette[slot]
+                else:
+                    group = segments
+                    layer = i + 1
+                    # Cycle the selected pens across layers; with no pens
+                    # selected, fall back to black at 30% opacity (alpha 0x4D)
+                    # so overlaps read faint.
+                    color = palette[i % len(palette)] if palette else "#0000004d"
+                if not group:
+                    continue
+                vsk.stroke(layer)
+                for (x0, y0), (x1, y1), weight, _ in group:
+                    vsk.strokeWeight(weight)
+                    if self.shorten_strokes and weight > 1:
+                        # A weight-n stroke extends (n-1)/2 pen widths past each end.
+                        dx, dy = x1 - x0, y1 - y0
+                        length = np.hypot(dx, dy)
+                        if length > 0:
+                            cut = min((weight - 1) / 2 * pen_cm, length / 2 - 1e-6)
+                            cut = max(cut, 0.0)
+                            ux, uy = dx / length, dy / length
+                            x0, y0 = x0 + ux * cut, y0 + uy * cut
+                            x1, y1 = x1 - ux * cut, y1 - uy * cut
+                    vsk.line(x0, y0, x1, y1)
+                vsk.vpype(f"linemerge --no-flip --layer {layer}")
+                vsk.vpype(f'color --layer {layer} "{color}"')
 
     def _generate_segments(self, vsk: vsketch.Vsketch, state, jitter=True):
-        """Walk the turtle over `state`, returning a list of ((x0,y0),(x1,y1))
-        line segments in cm (Scale folded into the root matrix). When `jitter`
+        """Walk the turtle over `state`, returning a list of
+        ((x0,y0),(x1,y1),weight,color) line segments in cm (Scale folded into the
+        root matrix; weight is the integer stroke weight, color the colour index). When `jitter`
         is False the turtle uses exact nominal lengths/angles."""
         def gauss():
             return vsk.randomGaussian() if jitter else 0.0
         matrix = self._scale(self.Scale)
+        weight = max(int(self.StrokeWeight), 1)
+        color = int(self.ColorStart)
         stack = []
         segments = []
         for t in state:
@@ -142,7 +188,7 @@ class LsysSketch(vsketch.SketchClass):
                 dist = 1 + gauss() * self.Length_std_deviation
                 p0 = matrix @ np.array([0.0, 0.0, 1.0])
                 p1 = matrix @ np.array([0.0, dist, 1.0])
-                segments.append(((p0[0], p0[1]), (p1[0], p1[1])))
+                segments.append(((p0[0], p0[1]), (p1[0], p1[1]), weight, color))
                 matrix = matrix @ self._translate(0, dist)
             elif t == "+":
                 matrix = matrix @ self._rotate(self.TurnAngle + gauss() * self.Angle__std_deviation)
@@ -151,11 +197,19 @@ class LsysSketch(vsketch.SketchClass):
             elif t == self.Move:
                 matrix = matrix @ self._translate(0, 1 + gauss() * self.Length_std_deviation)
             elif t == "[":
-                stack.append(matrix.copy())
+                stack.append((matrix.copy(), weight, color))
             elif t == "]":
-                matrix = stack.pop()
+                matrix, weight, color = stack.pop()
             elif t == "*":
                 matrix = matrix @ self._scale(self.TransformScale)
+            elif t == "#":
+                weight += 1
+            elif t == "!":
+                weight = max(weight - 1, 1)
+            elif t == "'":
+                color += 1
+            elif t == '"':
+                color -= 1
         return segments
 
     @staticmethod
@@ -199,7 +253,7 @@ class LsysSketch(vsketch.SketchClass):
     def _endpoints(segments):
         """Flatten a segment list into an (N, 2) array of endpoints, in order."""
         pts = []
-        for a, b in segments:
+        for a, b, _, _ in segments:
             pts.append(a)
             pts.append(b)
         return np.array(pts)
@@ -221,10 +275,10 @@ class LsysSketch(vsketch.SketchClass):
     @staticmethod
     def _transform(segments, R, t):
         out = []
-        for a, b in segments:
+        for a, b, w, c in segments:
             a2 = R @ np.array(a) + t
             b2 = R @ np.array(b) + t
-            out.append(((a2[0], a2[1]), (b2[0], b2[1])))
+            out.append(((a2[0], a2[1]), (b2[0], b2[1]), w, c))
         return out
 
     def finalize(self, vsk: vsketch.Vsketch) -> None:

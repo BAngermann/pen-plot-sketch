@@ -1,1 +1,1 @@
-{"Axiom": "F", "Pred1": "F", "Suc1": "F-F+F+F-F", "Pred2": "", "Suc2": "", "Draw": "F", "Move": "", "TurnAngle": 90, "iterations": 6, "Scale": 0.04, "TransformScale": 0.53, "__seed__": 0}
+{"Axiom": "F", "Pred1": "F", "Suc1": "F-F+F+F-F", "Pred2": "", "Suc2": "", "Draw": "F", "Move": "", "TurnAngle": 90, "iterations": 6, "Scale": 0.04, "TransformScale": 0.53, "__seed__": 0, "Angle__std_deviation": 0.0, "Length_std_deviation": 0.0, "instances": 1, "StrokeWeight": 1, "pen_width": 0.3, "shorten_strokes": false, "color_mode": "instance", "ColorStart": 0}

@@ -17,7 +17,7 @@ This sketch supports up to two production rules, branching via a matrix stack,
 optional mid-string scaling, and Gaussian jitter on lengths and angles for an
 organic, hand-grown look. Jittered copies can be overlaid as a "bundle" and
 optimally aligned, and the whole drawing can be repositioned on the page. It
-targets a portrait **A4** page in **cm**.
+targets a page set by `page_size` / `landscape` (default portrait A4), in **cm**.
 
 ## Parameters
 
@@ -47,6 +47,10 @@ After rewriting, the final string is walked symbol by symbol:
 | `[` | Push the current turtle state (start a branch). |
 | `]` | Pop the turtle state (return to the branch point). |
 | `*` | Scale subsequent motion by `TransformScale` (compounds; usually placed inside a branch). |
+| `#` | Increase the stroke weight by 1. |
+| `!` | Decrease the stroke weight by 1 (never below 1). |
+| `'` | Increment the colour index (only used when `color_mode` is `symbol`). |
+| `"` | Decrement the colour index (may go negative; see [Pen colours](#pen-colours)). |
 
 Note that `Draw` is a *set* of characters (e.g. `"FG"` means both `F` and `G`
 draw), while `Move` is a single character.
@@ -58,6 +62,29 @@ draw), while `Move` is a single character.
 | `TurnAngle` | Degrees turned by `+` / `-`. |
 | `TransformScale` | Multiplier applied by `*` (used for self-similar branch tapering). |
 | `Scale` | Overall scale of the whole figure on the page. |
+| `StrokeWeight` | Initial integer stroke weight (≥ 1) at the start of the string. |
+| `pen_width` | Physical pen width in mm. |
+| `shorten_strokes` | Pull both ends of every stroke in so heavy strokes keep their nominal length (see below). |
+
+#### Stroke weight
+
+Stroke weight uses vsketch's `strokeWeight`: a weight of *n* draws *n* parallel
+lines per segment, spaced by `pen_width` so the pen strokes sit side by side and
+build up a thicker line (as in the Takagi sketch). Set `pen_width` to your
+actual pen's nib width.
+
+The weight lives on the turtle state alongside position, heading and scale, so
+`[` pushes it and `]` restores it: a `#` or `!` inside a branch only affects
+that branch. Unlike `*`, the weight is an integer that changes additively and
+is **not** multiplied by `Scale`, and the jitter parameters don't affect it.
+With `shorten_strokes` on, each end of a weight-*n* stroke is pulled in by
+(*n*−1)/2 pen widths, which is exactly how far the extra lines poke out past
+that end (the stroke grows by *n*−1 pen widths in total). The outer extent then
+matches the unweighted segment. Segments shorter than the total reduction
+shrink to a dot rather than flipping around. Note this leaves small gaps at
+corners where heavy strokes meet.
+
+Example: `F[#F][!F]` draws the stem, a thicker branch and a thinner one.
 
 ### Variation & repetition
 
@@ -89,7 +116,7 @@ back to the first vertex only.
 
 ### Placement
 
-The drawing's bounding box is automatically centred on the A4 page (vsketch's
+The drawing's bounding box is automatically centred on the page (vsketch's
 own auto-centring is disabled). It is then rotated about its centre and
 translated by the global offset.
 
@@ -114,6 +141,29 @@ the same spot. Per layer:
 as the boxes sketch, with colour swatches shown in the GUI dropdowns). The first
 slot set to `none` ends the palette. Selected pens are **cycled across the
 instance layers** — instance *i* uses palette entry `i mod len(palette)`.
+
+#### Colour mode
+
+| Param | Meaning |
+|-------|---------|
+| `color_mode` | `instance` (default): the palette is cycled across instances as described above. `symbol`: the string chooses the pen. |
+| `ColorStart` | Colour index at the start of the string (symbol mode). |
+
+In `symbol` mode the turtle carries a **colour index**, which `'` increments and
+`"` decrements. Segments are drawn with pen `index mod number-of-selected-pens`
+(negative indices wrap around, so `"` at index 0 selects the last pen). Like
+the stroke weight, the index is part of the turtle state on the `[ ]` stack, so
+a change inside a branch is undone when the branch closes. It is not affected
+by `Scale` or jitter.
+
+Each instance is split into one layer per selected pen (layer numbers
+`instance × pens + pen + 1`), so plotter passes stay per-pen and pens that are
+never used produce no layer. Instances still get separate layers, so overlapping
+copies keep their drying-time separation. With no pens selected, the index has no
+effect and the figure falls back to one faint-black layer per instance.
+
+Example with two pens selected: `F['F][F]` draws the stem in pen 1 and the
+first branch in pen 2.
 
 If no colours are selected (all `none`), layers fall back to black at 30%
 opacity (`#0000004d`) so overlapping passes read faint.
