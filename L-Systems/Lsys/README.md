@@ -133,6 +133,10 @@ the same spot. Per layer:
 
 - `linemerge --no-flip` is run scoped to that layer (`--layer N`), so each
   instance is merged only within itself and segment direction is preserved.
+  This can be switched off with the `linemerge` param (on by default). It is by
+  far the slowest step (roughly 60% of the run time on large figures), so turn
+  it off while tuning in the preview and back on before exporting for the
+  plotter. The drawn lines are the same; merging only joins them (and snaps near-coincident endpoints), which shortens the total pen travel slightly.
 - the layer colour is assigned (see below).
 
 ### Pen colours

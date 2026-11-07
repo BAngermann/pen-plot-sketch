@@ -50,6 +50,10 @@ class LsysSketch(vsketch.SketchClass):
     color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
     color_7 = vsketch.Param("none", choices=COLOR_CHOICES)
 
+    # linemerge joins the per-segment lines into continuous strokes for plotting
+    # but dominates the run time; switch it off while tuning in the preview.
+    linemerge = vsketch.Param(True)
+
     # How pens are assigned: "instance" cycles the palette across the instance
     # layers; "symbol" lets the string pick the pen via the ' / " colour-index
     # symbols (index mod number of selected pens), starting at ColorStart.
@@ -155,9 +159,29 @@ class LsysSketch(vsketch.SketchClass):
                 if not group:
                     continue
                 vsk.stroke(layer)
+                # Weight-1 strokes are plain two-point lines, so consecutive
+                # ones are converted to page units (the only transform in
+                # effect is vsk.scale("cm")) and added to the document in one
+                # batch instead of one vsk.line call each (much faster).
+                # Heavier strokes go through vsk.line so vsketch builds their
+                # parallel lines. Batches are flushed before any heavier
+                # stroke to keep the line order within the layer unchanged.
+                batch = []
+
+                def flush():
+                    if batch:
+                        pts = np.array(batch).reshape(-1, 2, 2) * px_per_cm
+                        z = pts[..., 0] + 1j * pts[..., 1]
+                        vsk.document.add(vp.LineCollection(list(z)), layer)
+                        batch.clear()
+
                 for (x0, y0), (x1, y1), weight, _ in group:
+                    if weight == 1:
+                        batch.append((x0, y0, x1, y1))
+                        continue
+                    flush()
                     vsk.strokeWeight(weight)
-                    if self.shorten_strokes and weight > 1:
+                    if self.shorten_strokes:
                         # A weight-n stroke extends (n-1)/2 pen widths past each end.
                         dx, dy = x1 - x0, y1 - y0
                         length = np.hypot(dx, dy)
@@ -168,7 +192,9 @@ class LsysSketch(vsketch.SketchClass):
                             x0, y0 = x0 + ux * cut, y0 + uy * cut
                             x1, y1 = x1 - ux * cut, y1 - uy * cut
                     vsk.line(x0, y0, x1, y1)
-                vsk.vpype(f"linemerge --no-flip --layer {layer}")
+                flush()
+                if self.linemerge:
+                    vsk.vpype(f"linemerge --no-flip --layer {layer}")
                 vsk.vpype(f'color --layer {layer} "{color}"')
 
     def _generate_segments(self, vsk: vsketch.Vsketch, state, jitter=True):
