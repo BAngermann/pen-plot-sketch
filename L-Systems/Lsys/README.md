@@ -59,7 +59,7 @@ draw), while `Move` is a single character.
 |-------|---------|
 | `Draw` | Characters that draw a line segment. |
 | `Move` | Character that advances without drawing. |
-| `TurnAngle` | Degrees turned by `+` / `-`. |
+| `TurnAngle` | Degrees turned by `+` / `-`; fractional values are allowed (3 decimals in the GUI). |
 | `TransformScale` | Multiplier applied by `*` (used for self-similar branch tapering). |
 | `Scale` | Overall scale of the whole figure on the page. |
 | `StrokeWeight` | Initial integer stroke weight (≥ 1) at the start of the string. |
@@ -116,7 +116,7 @@ back to the first vertex only.
 
 ### Placement
 
-The drawing's bounding box is automatically centred on the page (vsketch's
+The drawing's bounding box is automatically centred in its panel (the whole page by default) (vsketch's
 own auto-centring is disabled). It is then rotated about its centre and
 translated by the global offset.
 
@@ -124,6 +124,47 @@ translated by the global offset.
 |-------|---------|
 | `GlobalRotation` | Rotation of the whole drawing about its centre, in degrees. |
 | `GlobalTranslateX` / `GlobalTranslateY` | Offset from the page centre, in cm. |
+
+### Panel layout
+
+Several copies of the L-system can share one page, e.g. a triptych. The page is
+divided into a `panels_x` × `panels_y` grid of equal panels, numbered row by row
+from the top left.
+
+| Param | Meaning |
+|-------|---------|
+| `panels_x` / `panels_y` | Number of columns / rows (default 1 × 1 = the old single-drawing behaviour). |
+| `margin_x` / `margin_y` | Exterior margin around the whole grid, in cm. |
+| `gap_x` / `gap_y` | Space between neighbouring panels, in cm (may differ from the margins and between x and y). |
+| `panel_fit` | Scale each drawing uniformly so it fills its panel (`Scale` is then irrelevant). Off: `Scale` is used as is and the drawing is only centred, so a large figure can overflow its panel. |
+| `panel_anchor` | What is pinned to the panel. `center` (default): the drawing's bounding box is centred, so drawings of different size have different start points. `start`: the turtle's starting point is placed at the same spot in every panel and the drawing is rotated and scaled about it, so e.g. tree roots line up horizontally across panels of different height. |
+| `anchor_x` / `anchor_y` | Where the start point goes in `start` mode, as a fraction of the panel (0 = left/top, 1 = right/bottom, default 0.5 / 0.5). `GlobalTranslateX/Y` is added on top. |
+| `panel_rotation_step` | Rotates panel *k*'s whole virtual page by *k* × `panel_rotation_step` degrees about the panel centre — the drawing **and** its anchor position move together, unlike `GlobalRotation`, which only turns the drawing. E.g. with `anchor_y = 0.95` (root near the bottom) a 180° panel has its root the same distance below the top edge and grows downward; a step of 60 gives 0°, 60°, 120°. Non-multiples of 90° (and 90° in non-square panels) swing the panel's corners outside its cell. |
+| `panel_seed` / `panel_seed_step` | With more than one panel, panel *k* reseeds the jitter with `panel_seed + k × panel_seed_step`. Step 0 gives every panel the same jitter. |
+| `panel_iterations_step` | Panel *k* uses `iterations + k × panel_iterations_step` rewrite passes (never below 0). |
+
+The panel size is `(page − 2 × margin − (n − 1) × gap) / n` in each direction;
+an error is raised if margins and gaps leave no room. `GlobalRotation` and
+`GlobalTranslateX/Y` apply within every panel (the translation is relative to
+the panel centre). With a single panel nothing is reseeded, so the GUI seed
+works as before; with several panels the seed comes from `panel_seed` instead.
+
+All panels share the same layers: instance *i* (and pen, in `symbol` colour
+mode) is one layer across the whole page, so the plot is organised by pen/pass
+rather than by panel, and `linemerge` runs over the whole layer.
+
+With `panel_anchor = start` and `panel_fit` on, each drawing gets the largest
+scale that keeps it inside the panel around the fixed anchor. If the anchor sits
+exactly on a panel edge there is no room on that side, so the drawing may
+overhang there rather than collapse; keep the anchor slightly inside (e.g.
+`anchor_y = 0.95` for roots near the bottom). Note that, as before, `Tall Tree`
+needs `GlobalRotation = 180` to grow upwards.
+
+Example (triptych of the Tall Tree preset on A4 landscape): `panels_x = 3`,
+`landscape = on`, `margin_x = margin_y = 1.5`, `gap_x = 1`, `panel_fit = on`,
+`panel_anchor = start` with `anchor_x = 0.5`, `anchor_y = 0.95`, and
+`panel_iterations_step = 1` for growing trees or `panel_seed_step = 1` for
+three random variants.
 
 ## Layers & output
 
@@ -138,6 +179,25 @@ the same spot. Per layer:
   it off while tuning in the preview and back on before exporting for the
   plotter. The drawn lines are the same; merging only joins them (and snaps near-coincident endpoints), which shortens the total pen travel slightly.
 - the layer colour is assigned (see below).
+
+### Single-path mode
+
+`single_path` (off by default) draws the turtle path as continuous polylines
+instead of separate segments. It only applies when the axiom and rules contain
+no `[` / `]` and no `Move` symbol, because then the turtle never jumps and the
+whole path is one connected line (otherwise a note is printed and the normal
+drawing is used). Consequences:
+
+- no pen lifts, and `linemerge` is skipped — the path is already a single line;
+- segments the path retraces (common in e.g. Dragon or Koch curves) are simply
+  drawn again each time it passes, which builds up darker lines with
+  low-opacity pens — a deliberate layering effect, not a bug;
+- weight changes (`#` / `!`) and, in `symbol` colour mode, colour changes split
+  the line into one polyline per run (a pen change needs a lift anyway); each
+  run of weight > 1 is buffered as one stroke, so corners get real joins
+  instead of per-segment end caps;
+- with several panels (or instances) each gets its own polyline;
+- `shorten_strokes` has no effect, since there are no stroke ends inside a path.
 
 ### Pen colours
 

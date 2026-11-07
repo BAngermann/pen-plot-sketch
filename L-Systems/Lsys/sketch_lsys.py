@@ -26,7 +26,7 @@ class LsysSketch(vsketch.SketchClass):
     Suc2 = vsketch.Param("")
     Draw = vsketch.Param("F")
     Move = vsketch.Param("f")
-    TurnAngle = vsketch.Param(120)
+    TurnAngle = vsketch.Param(120.0, decimals=3)
     Angle__std_deviation = vsketch.Param(0.0,decimals = 3)
     Length_std_deviation=  vsketch.Param(0.0,decimals = 3)
     instances = vsketch.Param(1)
@@ -54,6 +54,11 @@ class LsysSketch(vsketch.SketchClass):
     # but dominates the run time; switch it off while tuning in the preview.
     linemerge = vsketch.Param(True)
 
+    # For rules without brackets and without the Move symbol the turtle path is
+    # one connected line: draw it as a single polyline (no pen lifts, no
+    # linemerge needed). Segments the path retraces are drawn again each time.
+    single_path = vsketch.Param(False)
+
     # How pens are assigned: "instance" cycles the palette across the instance
     # layers; "symbol" lets the string pick the pen via the ' / " colour-index
     # symbols (index mod number of selected pens), starting at ColorStart.
@@ -70,6 +75,34 @@ class LsysSketch(vsketch.SketchClass):
     page_size = vsketch.Param("a4")
     landscape = vsketch.Param(False)
 
+    # Panel layout: a panels_x x panels_y grid of equal panels, each holding its
+    # own copy of the L-system (numbered row by row, left to right, from the
+    # top). margin_* is the exterior margin, gap_* the space between panels (cm).
+    panels_x = vsketch.Param(1, min_value=1)
+    panels_y = vsketch.Param(1, min_value=1)
+    margin_x = vsketch.Param(0.0, min_value=0.0, decimals=2)
+    margin_y = vsketch.Param(0.0, min_value=0.0, decimals=2)
+    gap_x = vsketch.Param(0.0, min_value=0.0, decimals=2)
+    gap_y = vsketch.Param(0.0, min_value=0.0, decimals=2)
+    # Scale each drawing uniformly to fill its panel (Scale is then irrelevant).
+    panel_fit = vsketch.Param(False)
+    # What is pinned to the panel: "center" centres the drawing's bounding box
+    # in the panel; "start" puts the turtle's starting point at the fractional
+    # panel position (anchor_x, anchor_y) (0 = left/top, 1 = right/bottom) and
+    # rotates/scales about it, so e.g. tree roots line up across panels.
+    panel_anchor = vsketch.Param("center", choices=["center", "start"])
+    anchor_x = vsketch.Param(0.5, min_value=0.0, max_value=1.0, decimals=3)
+    anchor_y = vsketch.Param(0.5, min_value=0.0, max_value=1.0, decimals=3)
+    # With more than one panel, panel k reseeds the random jitter with
+    # panel_seed + k * panel_seed_step and uses iterations + k *
+    # panel_iterations_step rewrite passes. (A single panel never reseeds.)
+    panel_seed = vsketch.Param(0)
+    panel_seed_step = vsketch.Param(1)
+    panel_iterations_step = vsketch.Param(0)
+    # Panel k's whole virtual page (drawing and anchor) is rotated about the
+    # panel centre by k * panel_rotation_step degrees.
+    panel_rotation_step = vsketch.Param(0.0, decimals=2)
+
     def draw(self, vsk: vsketch.Vsketch) -> None:
         # center=False disables vsketch's automatic centring; we place the
         # drawing ourselves (centre on the page, then apply the global offset).
@@ -79,59 +112,17 @@ class LsysSketch(vsketch.SketchClass):
         px_per_cm = vp.convert_length("1cm")
         page_w_cm = vsk.width / px_per_cm
         page_h_cm = vsk.height / px_per_cm
-        state = self.Axiom
-        for i in range(self.iterations):
-            newstate = ""
-            for t in state:
-                if t == self.Pred1:
-                    newstate += self.Suc1
-                elif t == self.Pred2:
-                    newstate += self.Suc2
-                else:
-                    newstate += t
-            state = newstate
-        #print(state)
-
-        # Generate the (jittered) geometry for every instance, in cm (Scale is
-        # folded into the turtle). Because the jitter only perturbs
-        # lengths/angles and never the string, every instance has the same
-        # number of segments in the same order, so their endpoints correspond
-        # one-to-one across instances. With Fix_reference, instance 0 is drawn at
-        # its nominal (un-jittered) values.
-        instances = [
-            self._generate_segments(vsk, state, jitter=not (self.Fix_reference and i == 0))
-            for i in range(self.instances)
-        ]
-
-        # Report the vertex count so the user can pick an AlignStart/AlignEnd range.
-        n_vertices = len(self._endpoints(instances[0])) if instances else 0
-        print(f"vertices: {n_vertices}")
-
-        if len(instances) > 1:
-            # Align each instance onto the first (instance 0) by the rigid
-            # transform (rotation + translation) that minimises the mean squared
-            # distance between corresponding endpoints, over the vertex-index
-            # range [AlignStart:AlignEnd]. The two extremes:
-            #   - first vertex only -> pins instances at their shared start point
-            #     (default, and what an empty range falls back to)
-            #   - all vertices      -> best whole-shape fit of the bundle
-            reference = self._endpoints(instances[0])
-            start, end = self._align_range(len(reference))
-            for i in range(1, len(instances)):
-                pts = self._endpoints(instances[i])
-                R, t = self._kabsch(pts[start:end], reference[start:end])
-                instances[i] = self._transform(instances[i], R, t)
-
-        # Place the whole drawing: centre its bounding box on the page, rotate
-        # about that centre, then apply the global translation (cm).
-        all_pts = np.vstack([self._endpoints(s) for s in instances if s])
-        if len(all_pts):
-            center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
-            offset = np.array([page_w_cm / 2 + self.GlobalTranslateX,
-                               page_h_cm / 2 + self.GlobalTranslateY])
-            R = self._rotate(self.GlobalRotation)[:2, :2]
-            t = offset - R @ center
-            instances = [self._transform(s, R, t) for s in instances]
+        # Build every panel; instance i of all panels shares layer(s) so that
+        # the plot is organised by pen/pass rather than by panel.
+        panels = self._panel_rects(page_w_cm, page_h_cm)
+        multi = len(panels) > 1
+        instances = [[] for _ in range(self.instances)]
+        for k, rect in enumerate(panels):
+            if multi:
+                vsk.randomSeed(self.panel_seed + k * self.panel_seed_step)
+            iterations = max(self.iterations + k * self.panel_iterations_step, 0)
+            for i, segs in enumerate(self._build_panel(vsk, iterations, rect, k if multi else None)):
+                instances[i].extend(segs)
 
         # Each instance gets its own layer(s), then linemerge runs only within
         # a layer (--no-flip preserves segment direction). Keeping instances on
@@ -143,6 +134,9 @@ class LsysSketch(vsketch.SketchClass):
         n_slots = len(palette) if by_symbol else 1
         vsk.penWidth(f"{self.pen_width}mm")
         pen_cm = self.pen_width / 10
+        chain_mode = self.single_path and self._single_path_possible()
+        if self.single_path and not chain_mode:
+            print("single_path ignored: the rules contain brackets or the Move symbol")
         for i, segments in enumerate(instances):
             for slot in range(n_slots):
                 if by_symbol:
@@ -159,6 +153,28 @@ class LsysSketch(vsketch.SketchClass):
                 if not group:
                     continue
                 vsk.stroke(layer)
+                if chain_mode:
+                    # Connected runs of equal weight become one polyline each
+                    # (a bracket-free, move-free string gives one per panel and
+                    # pen). shorten_strokes does not apply to continuous paths.
+                    lines = []
+
+                    def flush_lines():
+                        if lines:
+                            vsk.document.add(vp.LineCollection(lines), layer)
+                            lines.clear()
+
+                    for weight, pts in self._chains(group):
+                        if weight == 1:
+                            z = (pts[:, 0] + 1j * pts[:, 1]) * px_per_cm
+                            lines.append(z)
+                        else:
+                            flush_lines()
+                            vsk.strokeWeight(weight)
+                            vsk.polygon(pts[:, 0], pts[:, 1], close=False)
+                    flush_lines()
+                    vsk.vpype(f'color --layer {layer} "{color}"')
+                    continue
                 # Weight-1 strokes are plain two-point lines, so consecutive
                 # ones are converted to page units (the only transform in
                 # effect is vsk.scale("cm")) and added to the document in one
@@ -196,6 +212,153 @@ class LsysSketch(vsketch.SketchClass):
                 if self.linemerge:
                     vsk.vpype(f"linemerge --no-flip --layer {layer}")
                 vsk.vpype(f'color --layer {layer} "{color}"')
+
+    def _single_path_possible(self):
+        """True if no rule (or the axiom) contains a bracket or the Move symbol,
+        i.e. the turtle never jumps and the path is one connected line."""
+        texts = (self.Axiom, self.Suc1, self.Suc2)
+        banned = "[]" + (self.Move if self.Move else "")
+        return not any(ch in t for t in texts for ch in banned)
+
+    @staticmethod
+    def _chains(group, tol=1e-9):
+        """Split a segment list into runs of connected segments with the same
+        weight: [(weight, (n, 2) array of polyline points), ...]. A segment
+        joins the current run if it starts where the previous one ended."""
+        chains = []
+        cur, w, end = None, None, None
+        for a, b, weight, _ in group:
+            if (cur is not None and weight == w
+                    and abs(a[0] - end[0]) <= tol and abs(a[1] - end[1]) <= tol):
+                cur.append(b)
+            else:
+                if cur is not None:
+                    chains.append((w, np.array(cur)))
+                cur, w = [a, b], weight
+            end = b
+        if cur is not None:
+            chains.append((w, np.array(cur)))
+        return chains
+
+    def _panel_rects(self, page_w, page_h):
+        """(x, y, w, h) in cm of every panel, row by row from the top left."""
+        cols, rows = int(self.panels_x), int(self.panels_y)
+        w = (page_w - 2 * self.margin_x - (cols - 1) * self.gap_x) / cols
+        h = (page_h - 2 * self.margin_y - (rows - 1) * self.gap_y) / rows
+        if w <= 0 or h <= 0:
+            raise ValueError(
+                f"margins/gaps leave no room for the panels (panel size {w:.2f} x {h:.2f} cm)"
+            )
+        return [
+            (self.margin_x + c * (w + self.gap_x), self.margin_y + r * (h + self.gap_y), w, h)
+            for r in range(rows) for c in range(cols)
+        ]
+
+    def _expand(self, iterations):
+        """Apply the rewrite rules `iterations` times to the axiom."""
+        state = self.Axiom
+        for _ in range(iterations):
+            newstate = ""
+            for t in state:
+                if t == self.Pred1:
+                    newstate += self.Suc1
+                elif t == self.Pred2:
+                    newstate += self.Suc2
+                else:
+                    newstate += t
+            state = newstate
+        return state
+
+    def _build_panel(self, vsk, iterations, rect, panel_index):
+        """Geometry (one segment list per instance, in page cm) of one panel."""
+        px, py, pw, ph = rect
+        state = self._expand(iterations)
+
+        # Generate the (jittered) geometry for every instance, in cm (Scale is
+        # folded into the turtle). Because the jitter only perturbs
+        # lengths/angles and never the string, every instance has the same
+        # number of segments in the same order, so their endpoints correspond
+        # one-to-one across instances. With Fix_reference, instance 0 is drawn at
+        # its nominal (un-jittered) values.
+        instances = [
+            self._generate_segments(vsk, state, jitter=not (self.Fix_reference and i == 0))
+            for i in range(self.instances)
+        ]
+
+        # Report the vertex count so the user can pick an AlignStart/AlignEnd range.
+        n_vertices = len(self._endpoints(instances[0])) if instances else 0
+        label = "" if panel_index is None else f"panel {panel_index} "
+        print(f"{label}vertices: {n_vertices}")
+
+        if len(instances) > 1:
+            # Align each instance onto the first (instance 0) by the rigid
+            # transform (rotation + translation) that minimises the mean squared
+            # distance between corresponding endpoints, over the vertex-index
+            # range [AlignStart:AlignEnd]. The two extremes:
+            #   - first vertex only -> pins instances at their shared start point
+            #     (default, and what an empty range falls back to)
+            #   - all vertices      -> best whole-shape fit of the bundle
+            reference = self._endpoints(instances[0])
+            start, end = self._align_range(len(reference))
+            for i in range(1, len(instances)):
+                pts = self._endpoints(instances[i])
+                R, t = self._kabsch(pts[start:end], reference[start:end])
+                instances[i] = self._transform(instances[i], R, t)
+
+        # Place the drawing in its panel: rotate it, then either centre its
+        # bounding box in the panel or pin the turtle start point to the anchor
+        # (optionally scaling it to fill the panel), then apply the global
+        # translation (cm).
+        all_pts = np.vstack([self._endpoints(s) for s in instances if s])
+        if len(all_pts):
+            offset = np.array([px + pw / 2 + self.GlobalTranslateX,
+                               py + ph / 2 + self.GlobalTranslateY])
+            R = self._rotate(self.GlobalRotation)[:2, :2]
+            if self.panel_anchor == "start":
+                # The turtle starts at (0, 0) and instance 0 is never moved by
+                # the alignment, so (0, 0) is the start point; map it onto the
+                # anchor.
+                anchor = np.array([px + self.anchor_x * pw + self.GlobalTranslateX,
+                                   py + self.anchor_y * ph + self.GlobalTranslateY])
+                if self.panel_fit:
+                    # Largest scale that keeps the drawing inside the panel
+                    # around the fixed anchor. A side with no room (anchor on
+                    # that edge) cannot constrain the scale, so the drawing may
+                    # overhang there.
+                    rel = all_pts @ R.T
+                    room = (anchor - np.array([px, py]), np.array([px + pw, py + ph]) - anchor)
+                    scale = np.inf
+                    for a in (0, 1):
+                        lo, hi = rel[:, a].min(), rel[:, a].max()
+                        if lo < 0 and room[0][a] > 0:
+                            scale = min(scale, room[0][a] / -lo)
+                        if hi > 0 and room[1][a] > 0:
+                            scale = min(scale, room[1][a] / hi)
+                    R = (1.0 if np.isinf(scale) else scale) * R
+                t = anchor
+            elif self.panel_fit:
+                rotated = all_pts @ R.T
+                lo, hi = rotated.min(axis=0), rotated.max(axis=0)
+                size = hi - lo
+                ratios = [lim / d for lim, d in ((pw, size[0]), (ph, size[1])) if d > 0]
+                scale = min(ratios) if ratios else 1.0
+                R = scale * R
+                center = scale * (lo + hi) / 2
+                t = offset - center
+            else:
+                center = (all_pts.min(axis=0) + all_pts.max(axis=0)) / 2
+                t = offset - R @ center
+            instances = [self._transform(s, R, t) for s in instances]
+            # Rotate the whole virtual page of the panel (drawing, anchor and
+            # all) about the panel centre, so e.g. at 180 degrees a tree rooted
+            # near the bottom edge is rooted the same distance below the top
+            # edge and grows downward.
+            panel_angle = (panel_index or 0) * self.panel_rotation_step
+            if panel_angle:
+                Rp = self._rotate(panel_angle)[:2, :2]
+                pc = np.array([px + pw / 2, py + ph / 2])
+                instances = [self._transform(s, Rp, pc - Rp @ pc) for s in instances]
+        return instances
 
     def _generate_segments(self, vsk: vsketch.Vsketch, state, jitter=True):
         """Walk the turtle over `state`, returning a list of
