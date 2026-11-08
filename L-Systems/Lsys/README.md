@@ -201,7 +201,7 @@ drawing is used). Consequences:
 
 ### Pen colours
 
-`color_1`–`color_7` pick up to seven pens (the same DrawingBot-derived palette
+`color_1`–`color_10` pick up to ten pens (the same DrawingBot-derived palette
 as the boxes sketch, with colour swatches shown in the GUI dropdowns). The first
 slot set to `none` ends the palette. Selected pens are **cycled across the
 instance layers** — instance *i* uses palette entry `i mod len(palette)`.

@@ -40,7 +40,7 @@ class LsysSketch(vsketch.SketchClass):
     GlobalTranslateX = vsketch.Param(0.0, decimals = 2)
     GlobalTranslateY = vsketch.Param(0.0, decimals = 2)
 
-    # Up to 7 pen colours, cycled across the instance layers. The first "none"
+    # Up to 10 pen colours, cycled across the instance layers. The first "none"
     # ends the palette; if none are selected, layers fall back to faint black.
     color_1 = vsketch.Param("none", choices=COLOR_CHOICES)
     color_2 = vsketch.Param("none", choices=COLOR_CHOICES)
@@ -49,6 +49,9 @@ class LsysSketch(vsketch.SketchClass):
     color_5 = vsketch.Param("none", choices=COLOR_CHOICES)
     color_6 = vsketch.Param("none", choices=COLOR_CHOICES)
     color_7 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_8 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_9 = vsketch.Param("none", choices=COLOR_CHOICES)
+    color_10 = vsketch.Param("none", choices=COLOR_CHOICES)
 
     # linemerge joins the per-segment lines into continuous strokes for plotting
     # but dominates the run time; switch it off while tuning in the preview.
@@ -419,7 +422,8 @@ class LsysSketch(vsketch.SketchClass):
         """Selected pen colours (hex), truncated at the first 'none' slot."""
         palette = []
         for c in (self.color_1, self.color_2, self.color_3, self.color_4,
-                  self.color_5, self.color_6, self.color_7):
+                  self.color_5, self.color_6, self.color_7, self.color_8,
+                  self.color_9, self.color_10):
             if c == "none":
                 break
             palette.append(PENS.get(c, "black"))
