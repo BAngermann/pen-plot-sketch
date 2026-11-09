@@ -35,6 +35,7 @@ TURN_ANGLE = 90.0
 GLOBAL_ROTATION = 180.0
 PEN_WIDTH_MM = 0.3
 REF_PAGE_H_CM = 21.0  # A4 landscape height: the page Scale was tuned on
+SWATCH_SIZE_CM = 0.5  # colour-key square side on A4; scales with page height
 
 
 
@@ -46,10 +47,6 @@ class ASFTSketch(vsketch.SketchClass):
     iterations = vsketch.Param(16, min_value=12, max_value=19)
     Scale = vsketch.Param(9.0, min_value=8.5, max_value=9.2, decimals=2)
     TransformScale = vsketch.Param(0.704, min_value=0.700, max_value=0.707, decimals=3)
-
-    # TEMPORARY: side of the colour-key squares (cm) on A4; scaled with the
-    # page height for other sizes (A6 -> half). For quick turnaround.
-    swatch_size = vsketch.Param(0.5, min_value=0.2, max_value=3.0, decimals=2)
 
     def _assignment(self, vsk):
         """Randomly sample the pen assignment from the vsketch seed: the number
@@ -116,8 +113,8 @@ class ASFTSketch(vsketch.SketchClass):
         pts = pts @ R.T
         flat = pts.reshape(-1, 2)
         # Centre horizontally; vertically the tree sits above the colour key,
-        # its lowest point 0.618 * swatch_size above the top of the squares.
-        sz = self.swatch_size * page_h / REF_PAGE_H_CM
+        # its lowest point 0.618 * the square side above the top of the squares.
+        sz = SWATCH_SIZE_CM * page_h / REF_PAGE_H_CM
         lo, hi = flat.min(axis=0), flat.max(axis=0)
         target_bottom = page_h - 2.618 * sz - 0.618 * sz
         pts += np.array([page_w / 2 - (lo[0] + hi[0]) / 2, target_bottom - hi[1]])
