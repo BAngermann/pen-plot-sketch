@@ -8,6 +8,8 @@ import numpy as np
 # Make the repo-root `penfill` package importable when run via `vsk run`.
 _REPO = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO))
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+from lsys_common import expand, rotate, turtle_segments
 from penfill import install_swatches, load_pens
 
 # Pen colours converted from DrawingBot presets (see tools/drawingbot_to_vpype.py).
@@ -259,18 +261,13 @@ class LsysSketch(vsketch.SketchClass):
 
     def _expand(self, iterations):
         """Apply the rewrite rules `iterations` times to the axiom."""
-        state = self.Axiom
-        for _ in range(iterations):
-            newstate = ""
-            for t in state:
-                if t == self.Pred1:
-                    newstate += self.Suc1
-                elif t == self.Pred2:
-                    newstate += self.Suc2
-                else:
-                    newstate += t
-            state = newstate
-        return state
+        rules = {}
+        # Pred1 wins if both rules share a predecessor. Predecessors are single
+        # characters; anything else never matched.
+        for pred, suc in ((self.Pred2, self.Suc2), (self.Pred1, self.Suc1)):
+            if len(pred) == 1:
+                rules[pred] = suc
+        return expand(self.Axiom, rules, iterations)
 
     def _build_panel(self, vsk, iterations, rect, panel_index):
         """Geometry (one segment list per instance, in page cm) of one panel."""
@@ -316,7 +313,7 @@ class LsysSketch(vsketch.SketchClass):
         if len(all_pts):
             offset = np.array([px + pw / 2 + self.GlobalTranslateX,
                                py + ph / 2 + self.GlobalTranslateY])
-            R = self._rotate(self.GlobalRotation)[:2, :2]
+            R = rotate(self.GlobalRotation)[:2, :2]
             if self.panel_anchor == "start":
                 # The turtle starts at (0, 0) and instance 0 is never moved by
                 # the alignment, so (0, 0) is the start point; map it onto the
@@ -358,7 +355,7 @@ class LsysSketch(vsketch.SketchClass):
             # edge and grows downward.
             panel_angle = (panel_index or 0) * self.panel_rotation_step
             if panel_angle:
-                Rp = self._rotate(panel_angle)[:2, :2]
+                Rp = rotate(panel_angle)[:2, :2]
                 pc = np.array([px + pw / 2, py + ph / 2])
                 instances = [self._transform(s, Rp, pc - Rp @ pc) for s in instances]
         return instances
@@ -366,57 +363,21 @@ class LsysSketch(vsketch.SketchClass):
     def _generate_segments(self, vsk: vsketch.Vsketch, state, jitter=True):
         """Walk the turtle over `state`, returning a list of
         ((x0,y0),(x1,y1),weight,color) line segments in cm (Scale folded into the
-        root matrix; weight is the integer stroke weight, color the colour index). When `jitter`
-        is False the turtle uses exact nominal lengths/angles."""
-        def gauss():
-            return vsk.randomGaussian() if jitter else 0.0
-        matrix = self._scale(self.Scale)
-        weight = max(int(self.StrokeWeight), 1)
-        color = int(self.ColorStart)
-        stack = []
-        segments = []
-        for t in state:
-            if t in self.Draw:
-                dist = 1 + gauss() * self.Length_std_deviation
-                p0 = matrix @ np.array([0.0, 0.0, 1.0])
-                p1 = matrix @ np.array([0.0, dist, 1.0])
-                segments.append(((p0[0], p0[1]), (p1[0], p1[1]), weight, color))
-                matrix = matrix @ self._translate(0, dist)
-            elif t == "+":
-                matrix = matrix @ self._rotate(self.TurnAngle + gauss() * self.Angle__std_deviation)
-            elif t == "-":
-                matrix = matrix @ self._rotate(-self.TurnAngle + gauss() * self.Angle__std_deviation)
-            elif t == self.Move:
-                matrix = matrix @ self._translate(0, 1 + gauss() * self.Length_std_deviation)
-            elif t == "[":
-                stack.append((matrix.copy(), weight, color))
-            elif t == "]":
-                matrix, weight, color = stack.pop()
-            elif t == "*":
-                matrix = matrix @ self._scale(self.TransformScale)
-            elif t == "#":
-                weight += 1
-            elif t == "!":
-                weight = max(weight - 1, 1)
-            elif t == "'":
-                color += 1
-            elif t == '"':
-                color -= 1
-        return segments
-
-    @staticmethod
-    def _translate(dx, dy):
-        return np.array([[1.0, 0.0, dx], [0.0, 1.0, dy], [0.0, 0.0, 1.0]])
-
-    @staticmethod
-    def _scale(s):
-        return np.array([[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, 1.0]])
-
-    @staticmethod
-    def _rotate(degrees):
-        theta = np.radians(degrees)
-        c, s = np.cos(theta), np.sin(theta)
-        return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+        root matrix; weight is the integer stroke weight, color the colour index).
+        When `jitter` is False the turtle uses exact nominal lengths/angles."""
+        return turtle_segments(
+            state,
+            draw=self.Draw,
+            move=self.Move,
+            turn_angle=self.TurnAngle,
+            length_scale=self.Scale,
+            transform_scale=self.TransformScale,
+            angle_std=self.Angle__std_deviation,
+            length_std=self.Length_std_deviation,
+            gauss=vsk.randomGaussian if jitter else (lambda: 0.0),
+            weight=self.StrokeWeight,
+            color=int(self.ColorStart),
+        )
 
     def _palette(self):
         """Selected pen colours (hex), truncated at the first 'none' slot."""
